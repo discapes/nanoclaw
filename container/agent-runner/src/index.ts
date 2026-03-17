@@ -16,7 +16,7 @@
 
 import fs from 'fs';
 import path from 'path';
-import { query, HookCallback, PreCompactHookInput } from '@anthropic-ai/claude-agent-sdk';
+import { query, createSdkMcpServer, tool, HookCallback, PreCompactHookInput } from '@anthropic-ai/claude-agent-sdk';
 import { fileURLToPath } from 'url';
 
 interface ContainerInput {
@@ -56,6 +56,7 @@ interface SDKUserMessage {
 
 const IPC_INPUT_DIR = '/workspace/ipc/input';
 const IPC_INPUT_CLOSE_SENTINEL = path.join(IPC_INPUT_DIR, '_close');
+const IPC_INPUT_RESET_SENTINEL = path.join(IPC_INPUT_DIR, '_reset');
 const IPC_POLL_MS = 500;
 
 /**
@@ -335,6 +336,7 @@ async function runQuery(
   mcpServerPath: string,
   containerInput: ContainerInput,
   sdkEnv: Record<string, string | undefined>,
+  controlServer: ReturnType<typeof createSdkMcpServer>,
   resumeAt?: string,
 ): Promise<{ newSessionId?: string; lastAssistantUuid?: string; closedDuringQuery: boolean }> {
   const stream = new MessageStream();
@@ -348,6 +350,13 @@ async function runQuery(
     if (shouldClose()) {
       log('Close sentinel detected during query, ending stream');
       closedDuringQuery = true;
+      stream.end();
+      ipcPolling = false;
+      return;
+    }
+    if (fs.existsSync(IPC_INPUT_RESET_SENTINEL)) {
+      try { fs.unlinkSync(IPC_INPUT_RESET_SENTINEL); } catch { /* ignore */ }
+      log('Reset sentinel detected during query, ending stream');
       stream.end();
       ipcPolling = false;
       return;
@@ -407,7 +416,8 @@ async function runQuery(
         'TeamCreate', 'TeamDelete', 'SendMessage',
         'TodoWrite', 'ToolSearch', 'Skill',
         'NotebookEdit',
-        'mcp__nanoclaw__*'
+        'mcp__nanoclaw__*',
+        'mcp__agent-control__*'
       ],
       env: sdkEnv,
       permissionMode: 'bypassPermissions',
@@ -423,6 +433,7 @@ async function runQuery(
             NANOCLAW_IS_MAIN: containerInput.isMain ? '1' : '0',
           },
         },
+        'agent-control': controlServer,
       },
       hooks: {
         PreCompact: [{ hooks: [createPreCompactHook(containerInput.assistantName)] }],
@@ -489,10 +500,29 @@ async function main(): Promise<void> {
   const mcpServerPath = path.join(__dirname, 'ipc-mcp-stdio.js');
 
   let sessionId = containerInput.sessionId;
+  let resetRequested = false;
   fs.mkdirSync(IPC_INPUT_DIR, { recursive: true });
 
-  // Clean up stale _close sentinel from previous container runs
+  const controlServer = createSdkMcpServer({
+    name: 'agent-control',
+    tools: [
+      tool('reset_session', 'Start a fresh conversation session. The next message will begin a new session with no prior history.', {},
+        async () => {
+          resetRequested = true;
+          fs.writeFileSync(IPC_INPUT_RESET_SENTINEL, '');
+          return { content: [{ type: 'text' as const, text: 'Session will reset after this turn.' }] };
+        }),
+      tool('stop_container', 'Shut down this container gracefully. Use when the user wants to reload or restart.', {},
+        async () => {
+          fs.writeFileSync(IPC_INPUT_CLOSE_SENTINEL, '');
+          return { content: [{ type: 'text' as const, text: 'Container shutting down.' }] };
+        }),
+    ],
+  });
+
+  // Clean up stale sentinels from previous container runs
   try { fs.unlinkSync(IPC_INPUT_CLOSE_SENTINEL); } catch { /* ignore */ }
+  try { fs.unlinkSync(IPC_INPUT_RESET_SENTINEL); } catch { /* ignore */ }
 
   // Build initial prompt (drain any pending IPC messages too)
   let prompt = containerInput.prompt;
@@ -511,12 +541,19 @@ async function main(): Promise<void> {
     while (true) {
       log(`Starting query (session: ${sessionId || 'new'}, resumeAt: ${resumeAt || 'latest'})...`);
 
-      const queryResult = await runQuery(prompt, sessionId, mcpServerPath, containerInput, sdkEnv, resumeAt);
-      if (queryResult.newSessionId) {
-        sessionId = queryResult.newSessionId;
-      }
-      if (queryResult.lastAssistantUuid) {
-        resumeAt = queryResult.lastAssistantUuid;
+      const queryResult = await runQuery(prompt, sessionId, mcpServerPath, containerInput, sdkEnv, controlServer, resumeAt);
+      if (resetRequested) {
+        log('Session reset requested, clearing session state');
+        sessionId = undefined;
+        resumeAt = undefined;
+        resetRequested = false;
+      } else {
+        if (queryResult.newSessionId) {
+          sessionId = queryResult.newSessionId;
+        }
+        if (queryResult.lastAssistantUuid) {
+          resumeAt = queryResult.lastAssistantUuid;
+        }
       }
 
       // If _close was consumed during the query, exit immediately.
