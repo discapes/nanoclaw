@@ -55,6 +55,18 @@ systemctl --user stop nanoclaw
 systemctl --user restart nanoclaw
 ```
 
+## Agent Runner
+
+The agent runner (`container/agent-runner/src/`) runs inside each container. It calls the Claude Agent SDK's `query()` with a `MessageStream` (async iterable) as the prompt. The SDK keeps the query open for the container's entire lifetime — all follow-up messages are piped via `stream.push()`, not as separate `query()` calls. The query only ends when `stream.end()` is called (via `_close` or `_reset` sentinel). The outer `while(true)` loop in `main()` is a fallback for when the SDK ends the query unexpectedly.
+
+**Per-group source copies:** Each group gets its own copy of the agent-runner source at `data/sessions/{group}/agent-runner-src/`. This is copied once on first container spawn and never auto-updated. After modifying `container/agent-runner/src/`, sync to existing groups:
+
+```bash
+cp container/agent-runner/src/*.ts data/sessions/{group}/agent-runner-src/
+```
+
+Then stop the group's container so the next one recompiles from the updated source.
+
 ## Troubleshooting
 
 **WhatsApp not connecting after upgrade:** WhatsApp is now a separate channel fork, not bundled in core. Run `/add-whatsapp` (or `git remote add whatsapp https://github.com/qwibitai/nanoclaw-whatsapp.git && git fetch whatsapp main && (git merge whatsapp/main || { git checkout --theirs package-lock.json && git add package-lock.json && git merge --continue; }) && npm run build`) to install it. Existing auth credentials and groups are preserved.
