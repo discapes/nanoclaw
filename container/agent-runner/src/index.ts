@@ -448,6 +448,21 @@ async function runQuery(
       lastAssistantUuid = (message as { uuid: string }).uuid;
     }
 
+    // Stream assistant text so intermediate messages (before tool calls) aren't lost
+    if (message.type === 'assistant' && 'message' in message) {
+      const msg = (message as any).message;
+      if (Array.isArray(msg?.content)) {
+        const text = msg.content
+          .filter((c: any) => c.type === 'text')
+          .map((c: any) => c.text)
+          .join('\n')
+          .trim();
+        if (text) {
+          writeOutput({ status: 'success', result: text, newSessionId });
+        }
+      }
+    }
+
     if (message.type === 'system' && message.subtype === 'init') {
       newSessionId = message.session_id;
       log(`Session initialized: ${newSessionId}`);
@@ -460,11 +475,10 @@ async function runQuery(
 
     if (message.type === 'result') {
       resultCount++;
-      const textResult = 'result' in message ? (message as { result?: string }).result : null;
-      log(`Result #${resultCount}: subtype=${message.subtype}${textResult ? ` text=${textResult.slice(0, 200)}` : ''}`);
+      log(`Result #${resultCount}: subtype=${message.subtype}`);
       writeOutput({
         status: 'success',
-        result: textResult || null,
+        result: null,
         newSessionId
       });
     }
