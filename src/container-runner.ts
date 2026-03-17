@@ -2,7 +2,7 @@
  * Container Runner for NanoClaw
  * Spawns agent execution in containers and handles IPC
  */
-import { ChildProcess, exec, spawn } from 'child_process';
+import { ChildProcess, exec, execSync, spawn } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 
@@ -212,11 +212,23 @@ function buildVolumeMounts(
   return mounts;
 }
 
+function getContainerState(name: string): 'running' | 'stopped' | 'none' {
+  try {
+    const status = execSync(
+      `${CONTAINER_RUNTIME_BIN} inspect --format {{.State.Status}} ${name}`,
+      { stdio: 'pipe', encoding: 'utf-8' },
+    ).trim();
+    return status === 'running' ? 'running' : 'stopped';
+  } catch {
+    return 'none';
+  }
+}
+
 function buildContainerArgs(
   mounts: VolumeMount[],
   containerName: string,
 ): string[] {
-  const args: string[] = ['run', '-i', '--rm', '--name', containerName];
+  const args: string[] = ['run', '-i', '--name', containerName];
 
   // Pass host timezone so container's local time matches the user's
   args.push('-e', `TZ=${TIMEZONE}`);
@@ -277,7 +289,7 @@ export async function runContainerAgent(
 
   const mounts = buildVolumeMounts(group, input.isMain);
   const safeName = group.folder.replace(/[^a-zA-Z0-9-]/g, '-');
-  const containerName = `nanoclaw-${safeName}-${Date.now()}`;
+  const containerName = `nanoclaw-${safeName}`;
   const containerArgs = buildContainerArgs(mounts, containerName);
 
   logger.debug(
@@ -306,8 +318,17 @@ export async function runContainerAgent(
   const logsDir = path.join(groupDir, 'logs');
   fs.mkdirSync(logsDir, { recursive: true });
 
+  const containerState = getContainerState(containerName);
+  const spawnArgs =
+    containerState === 'none' ? containerArgs : ['start', '-ai', containerName];
+
+  logger.info(
+    { group: group.name, containerName, containerState },
+    'Starting container',
+  );
+
   return new Promise((resolve) => {
-    const container = spawn(CONTAINER_RUNTIME_BIN, containerArgs, {
+    const container = spawn(CONTAINER_RUNTIME_BIN, spawnArgs, {
       stdio: ['pipe', 'pipe', 'pipe'],
     });
 
