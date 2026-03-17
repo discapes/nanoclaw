@@ -24,7 +24,9 @@ RUN apt-get update && apt-get install -y \
     libxshmfence1 \
     curl \
     git \
-    && rm -rf /var/lib/apt/lists/*
+    sudo \
+    && rm -rf /var/lib/apt/lists/* \
+    && echo 'node ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/node
 
 # Set Chromium path for agent-browser
 ENV AGENT_BROWSER_EXECUTABLE_PATH=/usr/bin/chromium
