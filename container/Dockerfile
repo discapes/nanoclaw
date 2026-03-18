@@ -24,6 +24,7 @@ RUN apt-get update && apt-get install -y \
     libxshmfence1 \
     curl \
     git \
+    poppler-utils \
     sudo \
     && rm -rf /var/lib/apt/lists/* \
     && echo 'node ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/node
