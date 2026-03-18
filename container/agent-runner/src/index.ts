@@ -469,6 +469,7 @@ async function runQuery(
           .trim();
         if (text) {
           const emojis = [...toolsUsed].map(t => TOOL_EMOJI[t]).filter(Boolean).join('');
+          toolsUsed.clear();
           const output = emojis ? `${text} ${emojis}` : text;
           writeOutput({ status: 'success', result: output, newSessionId });
         }
