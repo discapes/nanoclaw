@@ -401,6 +401,11 @@ async function runQuery(
   const TOOL_EMOJI: Record<string, string> = {
     Bash: '⚡', Read: '👁', Write: '✍️', Edit: '✏️',
     Glob: '📂', Grep: '🔎', WebSearch: '🔍', WebFetch: '🌐',
+    mcp__nanoclaw__schedule_task: '[⏰📅]', mcp__nanoclaw__list_tasks: '[⏰📋]',
+    mcp__nanoclaw__pause_task: '[⏰⏸]', mcp__nanoclaw__resume_task: '[⏰▶]',
+    mcp__nanoclaw__cancel_task: '[⏰❌]', mcp__nanoclaw__update_task: '[⏰✏️]',
+    'mcp__agent-control__stop_container': '🛑', 'mcp__agent-control__reset_session': '🔄',
+    Skill: '🧩',
   };
   const toolsUsed = new Set<string>();
 
@@ -468,7 +473,7 @@ async function runQuery(
           .join('\n')
           .trim();
         if (text) {
-          const emojis = [...toolsUsed].map(t => TOOL_EMOJI[t]).filter(Boolean).join('');
+          const emojis = [...toolsUsed].map(t => TOOL_EMOJI[t] || '🔧').join('');
           toolsUsed.clear();
           const output = emojis ? `${text} ${emojis}` : text;
           writeOutput({ status: 'success', result: output, newSessionId });
