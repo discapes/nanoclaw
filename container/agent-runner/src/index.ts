@@ -127,11 +127,21 @@ function writeOutput(output: ContainerOutput): void {
 }
 
 function log(message: string): void {
-  console.error(`[agent-runner] ${message}`);
+  console.error(message);
 }
 
 function collapse(s: string): string {
   return s.replace(/\s*\n\s*/g, '  ↵ ').trim();
+}
+
+function extractUserMessages(s: string): string | null {
+  const matches = [
+    ...s.matchAll(/<message sender="([^"]*)"[^>]*>([\s\S]*?)<\/message>/g),
+  ];
+  if (matches.length === 0) return null;
+  return matches
+    .map((m) => (matches.length > 1 ? `${m[1]}: ${m[2]}` : m[2]))
+    .join(' | ');
 }
 
 function truncateMiddle(s: string, max = 1000): string {
@@ -516,8 +526,14 @@ async function runQuery(
   let resultCount = 0;
 
   const stream = new MessageStream();
-  messageCount++;
-  log(`#${messageCount} user: ${truncateMiddle(prompt)}`);
+  const logUser = (text: string) => {
+    messageCount++;
+    log(
+      `\n#${messageCount} user: ${truncateMiddle(extractUserMessages(text) || text)}`,
+    );
+  };
+
+  logUser(prompt);
   stream.push(prompt);
 
   // Poll IPC for follow-up messages and _close sentinel during the query
@@ -545,8 +561,7 @@ async function runQuery(
     }
     const messages = drainIpcInput();
     for (const text of messages) {
-      messageCount++;
-      log(`#${messageCount} user: ${truncateMiddle(text)}`);
+      logUser(text);
       stream.push(text);
     }
     setTimeout(pollIpcDuringQuery, IPC_POLL_MS);
@@ -656,7 +671,8 @@ async function runQuery(
   })) {
     messageCount++;
     const { label, text } = formatMessage(message);
-    log(`#${messageCount} ${label}:${text ? ' ' + text : ''}`);
+    const suffix = message.type === 'result' ? '\n' : '';
+    log(`#${messageCount} ${label}:${text ? ' ' + text : ''}${suffix}`);
 
     if (message.type === 'assistant' && 'uuid' in message) {
       lastAssistantUuid = (message as { uuid: string }).uuid;
