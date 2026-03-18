@@ -5,7 +5,13 @@ import { CronExpressionParser } from 'cron-parser';
 
 import { DATA_DIR, IPC_POLL_INTERVAL, TIMEZONE } from './config.js';
 import { AvailableGroup, writeTasksSnapshot } from './container-runner.js';
-import { createTask, deleteTask, getAllTasks, getTaskById, updateTask } from './db.js';
+import {
+  createTask,
+  deleteTask,
+  getAllTasks,
+  getTaskById,
+  updateTask,
+} from './db.js';
 import { isValidGroupFolder } from './group-folder.js';
 import { logger } from './logger.js';
 import { RegisteredGroup } from './types.js';
@@ -155,11 +161,19 @@ export function startIpcWatcher(deps: IpcDeps): void {
 
 function refreshTasksForGroup(groupFolder: string, isMain: boolean) {
   const tasks = getAllTasks();
-  writeTasksSnapshot(groupFolder, isMain, tasks.map((t) => ({
-    id: t.id, groupFolder: t.group_folder, prompt: t.prompt,
-    schedule_type: t.schedule_type, schedule_value: t.schedule_value,
-    status: t.status, next_run: t.next_run,
-  })));
+  writeTasksSnapshot(
+    groupFolder,
+    isMain,
+    tasks.map((t) => ({
+      id: t.id,
+      groupFolder: t.group_folder,
+      prompt: t.prompt,
+      schedule_type: t.schedule_type,
+      schedule_value: t.schedule_value,
+      status: t.status,
+      next_run: t.next_run,
+    })),
+  );
 }
 
 export async function processTaskIpc(
