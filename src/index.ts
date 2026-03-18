@@ -5,6 +5,7 @@ import {
   ASSISTANT_NAME,
   CREDENTIAL_PROXY_PORT,
   IDLE_TIMEOUT,
+  NANOCLAW_VERSION,
   POLL_INTERVAL,
   TIMEZONE,
   TRIGGER_PATTERN,
@@ -320,6 +321,7 @@ async function runAgent(
         chatJid,
         isMain,
         assistantName: ASSISTANT_NAME,
+        nanoclawVersion: NANOCLAW_VERSION,
       },
       (proc, containerName) =>
         queue.registerProcess(chatJid, proc, containerName, group.folder),

@@ -55,6 +55,14 @@ systemctl --user stop nanoclaw
 systemctl --user restart nanoclaw
 ```
 
+## Versioning
+
+Two independent versions are shown to agents in their system prompt:
+- **NanoClaw version** (`NANOCLAW_VERSION` in `src/config.ts`, read from `package.json`) — bump when changing host code (`src/`).
+- **Agent runner version** (`RUNNER_VERSION` in `container/agent-runner/src/index.ts`) — bump when changing agent runner code.
+
+When you make changes, bump the appropriate version.
+
 ## Agent Runner
 
 The agent runner (`container/agent-runner/src/`) runs inside each container. It calls the Claude Agent SDK's `query()` with a `MessageStream` (async iterable) as the prompt. The SDK keeps the query open for the container's entire lifetime — all follow-up messages are piped via `stream.push()`, not as separate `query()` calls. The query only ends when `stream.end()` is called (via `_close` or `_reset` sentinel). The outer `while(true)` loop in `main()` is a fallback for when the SDK ends the query unexpectedly.

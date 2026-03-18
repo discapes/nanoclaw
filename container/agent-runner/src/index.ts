@@ -35,6 +35,7 @@ interface ContainerInput {
   isMain: boolean;
   isScheduledTask?: boolean;
   assistantName?: string;
+  nanoclawVersion?: string;
 }
 
 interface ContainerOutput {
@@ -482,7 +483,7 @@ async function runQuery(
         type: 'preset' as const,
         preset: 'claude_code' as const,
         append:
-          `Agent runner version: ${RUNNER_VERSION}` +
+          `NanoClaw ${containerInput.nanoclawVersion || '?'}, agent runner ${RUNNER_VERSION}` +
           (globalClaudeMd ? `\n\n${globalClaudeMd}` : ''),
       },
       allowedTools: [
