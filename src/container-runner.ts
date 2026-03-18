@@ -29,15 +29,6 @@ import { detectAuthMode } from './credential-proxy.ts';
 import { validateAdditionalMounts } from './mount-security.ts';
 import type { RegisteredGroup } from './types.ts';
 
-function pathExistsOrIsSymlink(p: string): boolean {
-  try {
-    fs.lstatSync(p);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 // Sentinel markers for robust output parsing (must match agent-runner)
 const OUTPUT_START_MARKER = '---NANOCLAW_OUTPUT_START---';
 const OUTPUT_END_MARKER = '---NANOCLAW_OUTPUT_END---';
@@ -164,9 +155,9 @@ function buildVolumeMounts(
       const srcDir = path.join(skillsSrc, skillDir);
       if (!fs.statSync(srcDir).isDirectory()) continue;
       const dstDir = path.join(skillsDst, skillDir);
-      if (!pathExistsOrIsSymlink(dstDir)) {
+      try {
         fs.cpSync(srcDir, dstDir, { recursive: true });
-      }
+      } catch {}
     }
   }
   // Persistent /home/node per group (must come before .claude mount)
