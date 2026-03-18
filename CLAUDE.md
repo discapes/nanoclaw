@@ -86,6 +86,15 @@ Messages are sent with `parse_mode: 'Markdown'`. Square brackets `[...]` are sil
 
 **WhatsApp not connecting after upgrade:** WhatsApp is now a separate channel fork, not bundled in core. Run `/add-whatsapp` (or `git remote add whatsapp https://github.com/qwibitai/nanoclaw-whatsapp.git && git fetch whatsapp main && (git merge whatsapp/main || { git checkout --theirs package-lock.json && git add package-lock.json && git merge --continue; })`) to install it. Existing auth credentials and groups are preserved.
 
+## Placeholder Names
+
+- `FallbackAssistantNameDave` — default assistant name fallback in `src/config.ts`
+- `UnitTestNameBob` — assistant name used in test fixtures
+- `tg_james_bot` — Telegram bot username used in test fixtures
+- `Echo` — assistant name used in documentation and templates
+
+These are deliberately non-realistic to make it obvious when a placeholder is showing instead of a real configured name.
+
 ## Container Build Cache
 
 The container buildkit caches the build context aggressively. `--no-cache` alone does NOT invalidate COPY steps — the builder's volume retains stale files. To force a truly clean rebuild, prune the builder then re-run `./container/build.sh`.

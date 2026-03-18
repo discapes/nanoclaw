@@ -6,7 +6,7 @@ import {
   isValidGroupFolder,
   resolveGroupFolderPath,
   resolveGroupIpcPath,
-} from './group-folder.ts';
+} from '../../src/../src/group-folder.ts';
 
 describe('group folder validation', () => {
   it('accepts normal group folder names', () => {

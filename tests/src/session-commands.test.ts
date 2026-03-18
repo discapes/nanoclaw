@@ -3,19 +3,21 @@ import {
   extractSessionCommand,
   handleSessionCommand,
   isSessionCommandAllowed,
-} from './session-commands.ts';
-import type { NewMessage } from './types.ts';
-import type { SessionCommandDeps } from './session-commands.ts';
+} from '../../src/../src/session-commands.ts';
+import type { NewMessage } from '../../src/../src/types.ts';
+import type { SessionCommandDeps } from '../../src/../src/session-commands.ts';
 
 describe('extractSessionCommand', () => {
-  const trigger = /^@Andy\b/i;
+  const trigger = /^@UnitTestNameBob\b/i;
 
   it('detects bare /compact', () => {
     expect(extractSessionCommand('/compact', trigger)).toBe('/compact');
   });
 
   it('detects /compact with trigger prefix', () => {
-    expect(extractSessionCommand('@Andy /compact', trigger)).toBe('/compact');
+    expect(extractSessionCommand('@UnitTestNameBob /compact', trigger)).toBe(
+      '/compact',
+    );
   });
 
   it('rejects /compact with extra text', () => {
@@ -89,7 +91,7 @@ function makeDeps(
   };
 }
 
-const trigger = /^@Andy\b/i;
+const trigger = /^@UnitTestNameBob\b/i;
 
 describe('handleSessionCommand', () => {
   it('returns handled:false when no session command found', async () => {

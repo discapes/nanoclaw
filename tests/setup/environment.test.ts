@@ -11,7 +11,7 @@ import Database from 'better-sqlite3';
 
 describe('environment detection', () => {
   it('detects platform correctly', async () => {
-    const { getPlatform } = await import('./platform.js');
+    const { getPlatform } = await import('../../setup/platform.ts');
     const platform = getPlatform();
     expect(['macos', 'linux', 'unknown']).toContain(platform);
   });
@@ -48,7 +48,7 @@ describe('registered groups DB query', () => {
       '123@g.us',
       'Group 1',
       'group-1',
-      '@Andy',
+      '@UnitTestNameBob',
       '2024-01-01T00:00:00.000Z',
       1,
     );
@@ -60,7 +60,7 @@ describe('registered groups DB query', () => {
       '456@g.us',
       'Group 2',
       'group-2',
-      '@Andy',
+      '@UnitTestNameBob',
       '2024-01-01T00:00:00.000Z',
       1,
     );
@@ -89,7 +89,7 @@ describe('credentials detection', () => {
   });
 
   it('returns false when no credentials', () => {
-    const content = 'ASSISTANT_NAME="Andy"\nOTHER=foo';
+    const content = 'ASSISTANT_NAME="MyBot"\nOTHER=foo';
     const hasCredentials =
       /^(CLAUDE_CODE_OAUTH_TOKEN|ANTHROPIC_API_KEY)=/m.test(content);
     expect(hasCredentials).toBe(false);
@@ -98,7 +98,7 @@ describe('credentials detection', () => {
 
 describe('Docker detection logic', () => {
   it('commandExists returns boolean', async () => {
-    const { commandExists } = await import('./platform.js');
+    const { commandExists } = await import('../../setup/platform.ts');
     expect(typeof commandExists('docker')).toBe('boolean');
     expect(typeof commandExists('nonexistent_binary_xyz')).toBe('boolean');
   });
@@ -118,4 +118,3 @@ describe('channel auth detection', () => {
     expect(hasAuth('/tmp/nonexistent_auth_dir_xyz')).toBe(false);
   });
 });
-

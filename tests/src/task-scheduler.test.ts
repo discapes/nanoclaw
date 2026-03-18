@@ -1,11 +1,15 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { _initTestDatabase, createTask, getTaskById } from './db.ts';
+import {
+  _initTestDatabase,
+  createTask,
+  getTaskById,
+} from '../../src/../src/db.ts';
 import {
   _resetSchedulerLoopForTests,
   computeNextRun,
   startSchedulerLoop,
-} from './task-scheduler.ts';
+} from '../../src/../src/task-scheduler.ts';
 
 describe('task scheduler', () => {
   beforeEach(() => {

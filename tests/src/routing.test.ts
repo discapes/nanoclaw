@@ -1,7 +1,14 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 
-import { _initTestDatabase, getAllChats, storeChatMetadata } from './db.ts';
-import { getAvailableGroups, _setRegisteredGroups } from './index.ts';
+import {
+  _initTestDatabase,
+  getAllChats,
+  storeChatMetadata,
+} from '../../src/../src/db.ts';
+import {
+  getAvailableGroups,
+  _setRegisteredGroups,
+} from '../../src/../src/index.ts';
 
 beforeEach(() => {
   _initTestDatabase();
@@ -92,7 +99,7 @@ describe('getAvailableGroups', () => {
       'reg@g.us': {
         name: 'Registered',
         folder: 'registered',
-        trigger: '@Andy',
+        trigger: '@UnitTestNameBob',
         added_at: '2024-01-01T00:00:00.000Z',
       },
     });

@@ -40,7 +40,7 @@ describe('parameterized SQL registration', () => {
       '123@g.us',
       'Test Group',
       'test-group',
-      '@Andy',
+      '@UnitTestNameBob',
       '2024-01-01T00:00:00.000Z',
       1,
     );
@@ -58,7 +58,7 @@ describe('parameterized SQL registration', () => {
     expect(row.jid).toBe('123@g.us');
     expect(row.name).toBe('Test Group');
     expect(row.folder).toBe('test-group');
-    expect(row.trigger_pattern).toBe('@Andy');
+    expect(row.trigger_pattern).toBe('@UnitTestNameBob');
     expect(row.requires_trigger).toBe(1);
   });
 
@@ -73,7 +73,7 @@ describe('parameterized SQL registration', () => {
       '456@g.us',
       name,
       'obriens-group',
-      '@Andy',
+      '@UnitTestNameBob',
       '2024-01-01T00:00:00.000Z',
       0,
     );
@@ -94,7 +94,14 @@ describe('parameterized SQL registration', () => {
       `INSERT OR REPLACE INTO registered_groups
        (jid, name, folder, trigger_pattern, added_at, container_config, requires_trigger)
        VALUES (?, ?, ?, ?, ?, NULL, ?)`,
-    ).run(maliciousJid, 'Evil', 'evil', '@Andy', '2024-01-01T00:00:00.000Z', 1);
+    ).run(
+      maliciousJid,
+      'Evil',
+      'evil',
+      '@UnitTestNameBob',
+      '2024-01-01T00:00:00.000Z',
+      1,
+    );
 
     // Table should still exist and have the row
     const count = db
@@ -119,7 +126,7 @@ describe('parameterized SQL registration', () => {
       '789@s.whatsapp.net',
       'Personal',
       'main',
-      '@Andy',
+      '@UnitTestNameBob',
       '2024-01-01T00:00:00.000Z',
       0,
     );
@@ -140,7 +147,7 @@ describe('parameterized SQL registration', () => {
       '789@s.whatsapp.net',
       'Personal',
       'whatsapp_main',
-      '@Andy',
+      '@UnitTestNameBob',
       '2024-01-01T00:00:00.000Z',
       0,
       1,
@@ -162,7 +169,7 @@ describe('parameterized SQL registration', () => {
       '123@g.us',
       'Some Group',
       'whatsapp_some-group',
-      '@Andy',
+      '@UnitTestNameBob',
       '2024-01-01T00:00:00.000Z',
       1,
     );
@@ -185,7 +192,7 @@ describe('parameterized SQL registration', () => {
       '123@g.us',
       'Original',
       'main',
-      '@Andy',
+      '@UnitTestNameBob',
       '2024-01-01T00:00:00.000Z',
       1,
     );
@@ -212,29 +219,9 @@ describe('parameterized SQL registration', () => {
   });
 });
 
-describe('file templating', () => {
-  it('replaces assistant name in CLAUDE.md content', () => {
-    let content = '# Andy\n\nYou are Andy, a personal assistant.';
-
-    content = content.replace(/^# Andy$/m, '# Nova');
-    content = content.replace(/You are Andy/g, 'You are Nova');
-
-    expect(content).toBe('# Nova\n\nYou are Nova, a personal assistant.');
-  });
-
-  it('handles names with special regex characters', () => {
-    let content = '# Andy\n\nYou are Andy.';
-
-    const newName = 'C.L.A.U.D.E';
-    content = content.replace(/^# Andy$/m, `# ${newName}`);
-    content = content.replace(/You are Andy/g, `You are ${newName}`);
-
-    expect(content).toContain('# C.L.A.U.D.E');
-    expect(content).toContain('You are C.L.A.U.D.E.');
-  });
-
+describe('.env updates', () => {
   it('updates .env ASSISTANT_NAME line', () => {
-    let envContent = 'SOME_KEY=value\nASSISTANT_NAME="Andy"\nOTHER=test';
+    let envContent = 'SOME_KEY=value\nASSISTANT_NAME="OldName"\nOTHER=test';
 
     envContent = envContent.replace(
       /^ASSISTANT_NAME=.*$/m,

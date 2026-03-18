@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 
-import { formatLocalTime } from './timezone.ts';
+import { formatLocalTime } from '../../src/../src/timezone.ts';
 
 // --- formatLocalTime ---
 

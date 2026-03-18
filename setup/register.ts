@@ -33,7 +33,7 @@ function parseArgs(args: string[]): RegisterArgs {
     channel: 'whatsapp', // backward-compat: pre-refactor installs omit --channel
     requiresTrigger: true,
     isMain: false,
-    assistantName: 'Andy',
+    assistantName: '',
   };
 
   for (let i = 0; i < args.length; i++) {
@@ -60,7 +60,7 @@ function parseArgs(args: string[]): RegisterArgs {
         result.isMain = true;
         break;
       case '--assistant-name':
-        result.assistantName = args[++i] || 'Andy';
+        result.assistantName = args[++i] || '';
         break;
     }
   }
@@ -116,33 +116,9 @@ export async function run(args: string[]): Promise<void> {
     recursive: true,
   });
 
-  // Update assistant name in CLAUDE.md files if different from default
+  // Update ASSISTANT_NAME in .env if provided
   let nameUpdated = false;
-  if (parsed.assistantName !== 'Andy') {
-    logger.info(
-      { from: 'Andy', to: parsed.assistantName },
-      'Updating assistant name',
-    );
-
-    const mdFiles = [
-      path.join(projectRoot, 'groups', 'global', 'CLAUDE.md'),
-      path.join(projectRoot, 'groups', parsed.folder, 'CLAUDE.md'),
-    ];
-
-    for (const mdFile of mdFiles) {
-      if (fs.existsSync(mdFile)) {
-        let content = fs.readFileSync(mdFile, 'utf-8');
-        content = content.replace(/^# Andy$/m, `# ${parsed.assistantName}`);
-        content = content.replace(
-          /You are Andy/g,
-          `You are ${parsed.assistantName}`,
-        );
-        fs.writeFileSync(mdFile, content);
-        logger.info({ file: mdFile }, 'Updated CLAUDE.md');
-      }
-    }
-
-    // Update .env
+  if (parsed.assistantName) {
     const envFile = path.join(projectRoot, '.env');
     if (fs.existsSync(envFile)) {
       let envContent = fs.readFileSync(envFile, 'utf-8');
@@ -160,6 +136,18 @@ export async function run(args: string[]): Promise<void> {
     }
     logger.info('Set ASSISTANT_NAME in .env');
     nameUpdated = true;
+  }
+
+  // Note: CLAUDE.md templates are available in templates/ but not copied automatically.
+  // The user can copy and customize them:
+  //   templates/main-CLAUDE.md   → groups/{folder}/CLAUDE.md  (for main group)
+  //   templates/global-CLAUDE.md → groups/global/CLAUDE.md    (shared across groups)
+  const groupClaudeMd = path.join(projectRoot, 'groups', parsed.folder, 'CLAUDE.md');
+  if (!fs.existsSync(groupClaudeMd)) {
+    const template = parsed.isMain ? 'main-CLAUDE.md' : 'global-CLAUDE.md';
+    logger.info(
+      `No CLAUDE.md for this group. Template available at templates/${template}`,
+    );
   }
 
   emitStatus('REGISTER_CHANNEL', {

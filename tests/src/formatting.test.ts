@@ -1,13 +1,13 @@
 import { describe, it, expect } from 'vitest';
 
-import { ASSISTANT_NAME, TRIGGER_PATTERN } from './config.ts';
+import { ASSISTANT_NAME, TRIGGER_PATTERN } from '../../src/../src/config.ts';
 import {
   escapeXml,
   formatMessages,
   formatOutbound,
   stripInternalTags,
-} from './router.ts';
-import type { NewMessage } from './types.ts';
+} from '../../src/../src/router.ts';
+import type { NewMessage } from '../../src/../src/types.ts';
 
 function makeMsg(overrides: Partial<NewMessage> = {}): NewMessage {
   return {

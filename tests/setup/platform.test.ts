@@ -10,7 +10,7 @@ import {
   commandExists,
   getNodeVersion,
   getNodeMajorVersion,
-} from './platform.ts';
+} from '../../setup/platform.ts';
 
 // --- getPlatform ---
 

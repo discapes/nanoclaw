@@ -7,7 +7,7 @@ const OUTPUT_START_MARKER = '---NANOCLAW_OUTPUT_START---';
 const OUTPUT_END_MARKER = '---NANOCLAW_OUTPUT_END---';
 
 // Mock config
-vi.mock('./config.ts', () => ({
+vi.mock('../../src/../src/config.ts', () => ({
   CONTAINER_IMAGE: 'nanoclaw-agent:latest',
   CONTAINER_MAX_OUTPUT_SIZE: 10485760,
   CONTAINER_TIMEOUT: 1800000, // 30min
@@ -19,7 +19,7 @@ vi.mock('./config.ts', () => ({
 }));
 
 // Mock logger
-vi.mock('./logger.ts', () => ({
+vi.mock('../../src/../src/logger.ts', () => ({
   logger: {
     debug: vi.fn(),
     info: vi.fn(),
@@ -47,7 +47,7 @@ vi.mock('fs', async () => {
 });
 
 // Mock mount-security
-vi.mock('./mount-security.ts', () => ({
+vi.mock('../../src/../src/mount-security.ts', () => ({
   validateAdditionalMounts: vi.fn(() => []),
 }));
 
@@ -86,13 +86,16 @@ vi.mock('child_process', async () => {
   };
 });
 
-import { runContainerAgent, type ContainerOutput } from './container-runner.ts';
-import type { RegisteredGroup } from './types.ts';
+import {
+  runContainerAgent,
+  type ContainerOutput,
+} from '../../src/../src/container-runner.ts';
+import type { RegisteredGroup } from '../../src/../src/types.ts';
 
 const testGroup: RegisteredGroup = {
   name: 'Test Group',
   folder: 'test-group',
-  trigger: '@Andy',
+  trigger: '@UnitTestNameBob',
   added_at: new Date().toISOString(),
 };
 

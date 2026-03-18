@@ -14,7 +14,9 @@ export const NANOCLAW_VERSION = JSON.parse(
 ).version as string;
 
 export const ASSISTANT_NAME =
-  process.env.ASSISTANT_NAME || envConfig.ASSISTANT_NAME || 'Andy';
+  process.env.ASSISTANT_NAME ||
+  envConfig.ASSISTANT_NAME ||
+  'FallbackAssistantNameDave';
 export const ASSISTANT_HAS_OWN_NUMBER =
   (process.env.ASSISTANT_HAS_OWN_NUMBER ||
     envConfig.ASSISTANT_HAS_OWN_NUMBER) === 'true';

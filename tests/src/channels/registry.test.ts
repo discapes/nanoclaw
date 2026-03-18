@@ -4,7 +4,7 @@ import {
   registerChannel,
   getChannelFactory,
   getRegisteredChannelNames,
-} from './registry.ts';
+} from '../../../src/channels/registry.ts';
 
 // The registry is module-level state, so we need a fresh module per test.
 // We use dynamic import with cache-busting to isolate tests.

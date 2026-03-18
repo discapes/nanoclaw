@@ -1,9 +1,9 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
 
-import { GroupQueue } from './group-queue.ts';
+import { GroupQueue } from '../../src/../src/group-queue.ts';
 
 // Mock config to control concurrency limit
-vi.mock('./config.ts', () => ({
+vi.mock('../../src/../src/config.ts', () => ({
   DATA_DIR: '/tmp/nanoclaw-test-data',
   MAX_CONCURRENT_CONTAINERS: 2,
 }));
