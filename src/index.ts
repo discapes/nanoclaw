@@ -358,7 +358,6 @@ async function runAgent(
         groupFolder: group.folder,
         chatJid,
         isMain,
-        assistantName: ASSISTANT_NAME,
         nanoclawVersion: NANOCLAW_VERSION,
       },
       (proc, containerName) =>

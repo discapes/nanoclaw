@@ -34,7 +34,6 @@ interface ContainerInput {
   chatJid: string;
   isMain: boolean;
   isScheduledTask?: boolean;
-  assistantName?: string;
   nanoclawVersion?: string;
 }
 
@@ -163,7 +162,7 @@ function getSessionSummary(
 /**
  * Archive the full transcript to conversations/ before compaction.
  */
-function createPreCompactHook(assistantName?: string): HookCallback {
+function createPreCompactHook(): HookCallback {
   return async (input, _toolUseId, _context) => {
     const preCompact = input as PreCompactHookInput;
     const transcriptPath = preCompact.transcript_path;
@@ -193,11 +192,7 @@ function createPreCompactHook(assistantName?: string): HookCallback {
       const filename = `${date}-${name}.md`;
       const filePath = path.join(conversationsDir, filename);
 
-      const markdown = formatTranscriptMarkdown(
-        messages,
-        summary,
-        assistantName,
-      );
+      const markdown = formatTranscriptMarkdown(messages, summary);
       fs.writeFileSync(filePath, markdown);
 
       log(`Archived conversation to ${filePath}`);
@@ -260,7 +255,6 @@ function parseTranscript(content: string): ParsedMessage[] {
 function formatTranscriptMarkdown(
   messages: ParsedMessage[],
   title?: string | null,
-  assistantName?: string,
 ): string {
   const now = new Date();
   const formatDateTime = (d: Date) =>
@@ -281,7 +275,7 @@ function formatTranscriptMarkdown(
   lines.push('');
 
   for (const msg of messages) {
-    const sender = msg.role === 'user' ? 'User' : assistantName || 'Assistant';
+    const sender = msg.role === 'user' ? 'User' : 'Assistant';
     const content =
       msg.content.length > 2000
         ? msg.content.slice(0, 2000) + '...'
@@ -525,9 +519,7 @@ async function runQuery(
         'agent-control': controlServer,
       },
       hooks: {
-        PreCompact: [
-          { hooks: [createPreCompactHook(containerInput.assistantName)] },
-        ],
+        PreCompact: [{ hooks: [createPreCompactHook()] }],
       },
     },
   })) {
@@ -733,9 +725,7 @@ async function main(): Promise<void> {
           allowDangerouslySkipPermissions: true,
           settingSources: ['project', 'user'] as const,
           hooks: {
-            PreCompact: [
-              { hooks: [createPreCompactHook(containerInput.assistantName)] },
-            ],
+            PreCompact: [{ hooks: [createPreCompactHook()] }],
           },
         },
       })) {

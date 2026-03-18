@@ -3,7 +3,6 @@ import { CronExpressionParser } from 'cron-parser';
 import fs from 'fs';
 
 import {
-  ASSISTANT_NAME,
   NANOCLAW_VERSION,
   SCHEDULER_POLL_INTERVAL,
   TIMEZONE,
@@ -183,7 +182,6 @@ async function runTask(
         chatJid: task.chat_jid,
         isMain,
         isScheduledTask: true,
-        assistantName: ASSISTANT_NAME,
         nanoclawVersion: NANOCLAW_VERSION,
       },
       (proc, containerName) =>
