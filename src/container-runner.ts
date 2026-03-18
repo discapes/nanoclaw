@@ -176,7 +176,12 @@ function buildVolumeMounts(
   });
 
   // Mount agent-runner source read-only so agents use the provided runner
-  const agentRunnerSrc = path.join(projectRoot, 'container', 'agent-runner', 'src');
+  const agentRunnerSrc = path.join(
+    projectRoot,
+    'container',
+    'agent-runner',
+    'src',
+  );
   mounts.push({
     hostPath: agentRunnerSrc,
     containerPath: '/app/src',
