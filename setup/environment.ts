@@ -7,10 +7,10 @@ import path from 'path';
 
 import Database from 'better-sqlite3';
 
-import { STORE_DIR } from '../src/config.js';
-import { logger } from '../src/logger.js';
-import { commandExists, getPlatform, isHeadless, isWSL } from './platform.js';
-import { emitStatus } from './status.js';
+import { STORE_DIR } from '../src/config.ts';
+import { logger } from '../src/logger.ts';
+import { commandExists, getPlatform, isHeadless, isWSL } from './platform.ts';
+import { emitStatus } from './status.ts';
 
 export async function run(_args: string[]): Promise<void> {
   const projectRoot = process.cwd();

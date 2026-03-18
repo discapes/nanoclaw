@@ -1,6 +1,6 @@
 import path from 'path';
 
-import { DATA_DIR, GROUPS_DIR } from './config.js';
+import { DATA_DIR, GROUPS_DIR } from './config.ts';
 
 const GROUP_FOLDER_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
 const RESERVED_FOLDERS = new Set(['global']);

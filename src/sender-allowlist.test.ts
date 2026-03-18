@@ -9,7 +9,7 @@ import {
   loadSenderAllowlist,
   SenderAllowlistConfig,
   shouldDropMessage,
-} from './sender-allowlist.js';
+} from './sender-allowlist.ts';
 
 let tmpDir: string;
 

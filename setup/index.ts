@@ -2,8 +2,8 @@
  * Setup CLI entry point.
  * Usage: npx tsx setup/index.ts --step <name> [args...]
  */
-import { logger } from '../src/logger.js';
-import { emitStatus } from './status.js';
+import { logger } from '../src/logger.ts';
+import { emitStatus } from './status.ts';
 
 const STEPS: Record<
   string,

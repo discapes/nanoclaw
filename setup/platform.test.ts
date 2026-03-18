@@ -10,7 +10,7 @@ import {
   commandExists,
   getNodeVersion,
   getNodeMajorVersion,
-} from './platform.js';
+} from './platform.ts';
 
 // --- getPlatform ---
 

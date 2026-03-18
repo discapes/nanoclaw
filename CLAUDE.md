@@ -37,8 +37,9 @@ Single Node.js process with skill-based channel system. Channels (WhatsApp, Tele
 Run commands directly—don't tell the user to run them.
 
 ```bash
-npm run dev          # Run with hot reload
-npm run build        # Compile TypeScript
+npm start            # Run directly (node --strip-types)
+npm run dev          # Run with hot reload (tsx)
+npm run typecheck    # Check types without compiling
 ./container/build.sh # Rebuild agent container
 ```
 

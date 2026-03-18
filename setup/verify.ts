@@ -11,16 +11,16 @@ import path from 'path';
 
 import Database from 'better-sqlite3';
 
-import { STORE_DIR } from '../src/config.js';
-import { readEnvFile } from '../src/env.js';
-import { logger } from '../src/logger.js';
+import { STORE_DIR } from '../src/config.ts';
+import { readEnvFile } from '../src/env.ts';
+import { logger } from '../src/logger.ts';
 import {
   getPlatform,
   getServiceManager,
   hasSystemd,
   isRoot,
-} from './platform.js';
-import { emitStatus } from './status.js';
+} from './platform.ts';
+import { emitStatus } from './status.ts';
 
 export async function run(_args: string[]): Promise<void> {
   const projectRoot = process.cwd();

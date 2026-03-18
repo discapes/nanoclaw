@@ -7,12 +7,12 @@ import {
   NANOCLAW_VERSION,
   SCHEDULER_POLL_INTERVAL,
   TIMEZONE,
-} from './config.js';
+} from './config.ts';
 import {
   ContainerOutput,
   runContainerAgent,
   writeTasksSnapshot,
-} from './container-runner.js';
+} from './container-runner.ts';
 import {
   getAllTasks,
   getDueTasks,
@@ -20,11 +20,11 @@ import {
   logTaskRun,
   updateTask,
   updateTaskAfterRun,
-} from './db.js';
-import { GroupQueue } from './group-queue.js';
-import { resolveGroupFolderPath } from './group-folder.js';
-import { logger } from './logger.js';
-import { RegisteredGroup, ScheduledTask } from './types.js';
+} from './db.ts';
+import { GroupQueue } from './group-queue.ts';
+import { resolveGroupFolderPath } from './group-folder.ts';
+import { logger } from './logger.ts';
+import { RegisteredGroup, ScheduledTask } from './types.ts';
 
 /**
  * Compute the next run time for a recurring task, anchored to the

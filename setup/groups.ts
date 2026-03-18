@@ -10,9 +10,9 @@ import path from 'path';
 
 import Database from 'better-sqlite3';
 
-import { STORE_DIR } from '../src/config.js';
-import { logger } from '../src/logger.js';
-import { emitStatus } from './status.js';
+import { STORE_DIR } from '../src/config.ts';
+import { logger } from '../src/logger.ts';
+import { emitStatus } from './status.ts';
 
 function parseArgs(args: string[]): { list: boolean; limit: number } {
   let list = false;

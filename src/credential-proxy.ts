@@ -14,8 +14,8 @@ import { createServer, Server } from 'http';
 import { request as httpsRequest } from 'https';
 import { request as httpRequest, RequestOptions } from 'http';
 
-import { readEnvFile } from './env.js';
-import { logger } from './logger.js';
+import { readEnvFile } from './env.ts';
+import { logger } from './logger.ts';
 
 export type AuthMode = 'api-key' | 'oauth';
 

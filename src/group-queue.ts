@@ -2,9 +2,9 @@ import { ChildProcess, execSync } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 
-import { DATA_DIR, MAX_CONCURRENT_CONTAINERS } from './config.js';
-import { CONTAINER_RUNTIME_BIN } from './container-runtime.js';
-import { logger } from './logger.js';
+import { DATA_DIR, MAX_CONCURRENT_CONTAINERS } from './config.ts';
+import { CONTAINER_RUNTIME_BIN } from './container-runtime.ts';
+import { logger } from './logger.ts';
 
 interface QueuedTask {
   id: string;

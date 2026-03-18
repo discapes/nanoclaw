@@ -2,7 +2,7 @@ import fs from 'fs';
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 
 // Mock config before importing the module under test
-vi.mock('./config.js', () => ({
+vi.mock('./config.ts', () => ({
   DATA_DIR: '/tmp/nanoclaw-rc-test',
 }));
 
@@ -19,7 +19,7 @@ import {
   getActiveSession,
   _resetForTesting,
   _getStateFilePath,
-} from './remote-control.js';
+} from './remote-control.ts';
 
 // --- Helpers ---
 

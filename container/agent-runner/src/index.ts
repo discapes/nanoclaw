@@ -515,7 +515,7 @@ async function runQuery(
       mcpServers: {
         nanoclaw: {
           command: 'node',
-          args: [mcpServerPath],
+          args: ['--strip-types', mcpServerPath],
           env: {
             NANOCLAW_CHAT_JID: containerInput.chatJid,
             NANOCLAW_GROUP_FOLDER: containerInput.groupFolder,
@@ -632,7 +632,7 @@ async function main(): Promise<void> {
   const sdkEnv: Record<string, string | undefined> = { ...process.env };
 
   const __dirname = path.dirname(fileURLToPath(import.meta.url));
-  const mcpServerPath = path.join(__dirname, 'ipc-mcp-stdio.js');
+  const mcpServerPath = path.join(__dirname, 'ipc-mcp-stdio.ts');
 
   let sessionId = containerInput.sessionId;
   let resetRequested = false;

@@ -9,7 +9,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 
-import { logger } from '../src/logger.js';
+import { logger } from '../src/logger.ts';
 import {
   getPlatform,
   getNodePath,
@@ -17,8 +17,8 @@ import {
   hasSystemd,
   isRoot,
   isWSL,
-} from './platform.js';
-import { emitStatus } from './status.js';
+} from './platform.ts';
+import { emitStatus } from './status.ts';
 
 export async function run(_args: string[]): Promise<void> {
   const projectRoot = process.cwd();
@@ -90,7 +90,8 @@ function setupLaunchd(
     <key>ProgramArguments</key>
     <array>
         <string>${nodePath}</string>
-        <string>${projectRoot}/dist/index.js</string>
+        <string>--strip-types</string>
+        <string>${projectRoot}/src/index.ts</string>
     </array>
     <key>WorkingDirectory</key>
     <string>${projectRoot}</string>
@@ -165,7 +166,7 @@ function setupLinux(
  */
 function killOrphanedProcesses(projectRoot: string): void {
   try {
-    execSync(`pkill -f '${projectRoot}/dist/index\\.js' || true`, {
+    execSync(`pkill -f '${projectRoot}/src/index\\.ts' || true`, {
       stdio: 'ignore',
     });
     logger.info('Stopped any orphaned nanoclaw processes');
@@ -239,7 +240,7 @@ After=network.target
 
 [Service]
 Type=simple
-ExecStart=${nodePath} ${projectRoot}/dist/index.js
+ExecStart=${nodePath} --strip-types ${projectRoot}/src/index.ts
 WorkingDirectory=${projectRoot}
 Restart=always
 RestartSec=5
@@ -336,7 +337,7 @@ function setupNohupFallback(
     'fi',
     '',
     'echo "Starting NanoClaw..."',
-    `nohup ${JSON.stringify(nodePath)} ${JSON.stringify(projectRoot + '/dist/index.js')} \\`,
+    `nohup ${JSON.stringify(nodePath)} --strip-types ${JSON.stringify(projectRoot + '/src/index.ts')} \\`,
     `  >> ${JSON.stringify(projectRoot + '/logs/nanoclaw.log')} \\`,
     `  2>> ${JSON.stringify(projectRoot + '/logs/nanoclaw.error.log')} &`,
     '',

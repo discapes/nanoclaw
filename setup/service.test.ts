@@ -23,7 +23,8 @@ function generatePlist(
     <key>ProgramArguments</key>
     <array>
         <string>${nodePath}</string>
-        <string>${projectRoot}/dist/index.js</string>
+        <string>--strip-types</string>
+        <string>${projectRoot}/src/index.ts</string>
     </array>
     <key>WorkingDirectory</key>
     <string>${projectRoot}</string>
@@ -58,7 +59,7 @@ After=network.target
 
 [Service]
 Type=simple
-ExecStart=${nodePath} ${projectRoot}/dist/index.js
+ExecStart=${nodePath} --strip-types ${projectRoot}/src/index.ts
 WorkingDirectory=${projectRoot}
 Restart=always
 RestartSec=5
@@ -91,13 +92,14 @@ describe('plist generation', () => {
     expect(plist).toContain('<string>/opt/node/bin/node</string>');
   });
 
-  it('points to dist/index.js', () => {
+  it('points to src/index.ts', () => {
     const plist = generatePlist(
       '/usr/local/bin/node',
       '/home/user/nanoclaw',
       '/home/user',
     );
-    expect(plist).toContain('/home/user/nanoclaw/dist/index.js');
+    expect(plist).toContain('--strip-types');
+    expect(plist).toContain('/home/user/nanoclaw/src/index.ts');
   });
 
   it('sets log paths', () => {
@@ -161,7 +163,7 @@ describe('systemd unit generation', () => {
       false,
     );
     expect(unit).toContain(
-      'ExecStart=/usr/bin/node /srv/nanoclaw/dist/index.js',
+      'ExecStart=/usr/bin/node --strip-types /srv/nanoclaw/src/index.ts',
     );
   });
 });
@@ -176,7 +178,7 @@ describe('WSL nohup fallback', () => {
     const wrapper = `#!/bin/bash
 set -euo pipefail
 cd ${JSON.stringify(projectRoot)}
-nohup ${JSON.stringify(nodePath)} ${JSON.stringify(projectRoot)}/dist/index.js >> ${JSON.stringify(projectRoot)}/logs/nanoclaw.log 2>> ${JSON.stringify(projectRoot)}/logs/nanoclaw.error.log &
+nohup ${JSON.stringify(nodePath)} --strip-types ${JSON.stringify(projectRoot)}/src/index.ts >> ${JSON.stringify(projectRoot)}/logs/nanoclaw.log 2>> ${JSON.stringify(projectRoot)}/logs/nanoclaw.error.log &
 echo $! > ${JSON.stringify(pidFile)}`;
 
     expect(wrapper).toContain('#!/bin/bash');

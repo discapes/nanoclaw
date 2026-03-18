@@ -15,19 +15,19 @@ import {
   GROUPS_DIR,
   IDLE_TIMEOUT,
   TIMEZONE,
-} from './config.js';
-import { resolveGroupFolderPath, resolveGroupIpcPath } from './group-folder.js';
-import { logger } from './logger.js';
+} from './config.ts';
+import { resolveGroupFolderPath, resolveGroupIpcPath } from './group-folder.ts';
+import { logger } from './logger.ts';
 import {
   CONTAINER_HOST_GATEWAY,
   CONTAINER_RUNTIME_BIN,
   hostGatewayArgs,
   readonlyMountArgs,
   stopContainer,
-} from './container-runtime.js';
-import { detectAuthMode } from './credential-proxy.js';
-import { validateAdditionalMounts } from './mount-security.js';
-import { RegisteredGroup } from './types.js';
+} from './container-runtime.ts';
+import { detectAuthMode } from './credential-proxy.ts';
+import { validateAdditionalMounts } from './mount-security.ts';
+import { RegisteredGroup } from './types.ts';
 
 // Sentinel markers for robust output parsing (must match agent-runner)
 const OUTPUT_START_MARKER = '---NANOCLAW_OUTPUT_START---';

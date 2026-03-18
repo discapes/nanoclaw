@@ -3,18 +3,18 @@ import path from 'path';
 
 import { CronExpressionParser } from 'cron-parser';
 
-import { DATA_DIR, IPC_POLL_INTERVAL, TIMEZONE } from './config.js';
-import { AvailableGroup, writeTasksSnapshot } from './container-runner.js';
+import { DATA_DIR, IPC_POLL_INTERVAL, TIMEZONE } from './config.ts';
+import { AvailableGroup, writeTasksSnapshot } from './container-runner.ts';
 import {
   createTask,
   deleteTask,
   getAllTasks,
   getTaskById,
   updateTask,
-} from './db.js';
-import { isValidGroupFolder } from './group-folder.js';
-import { logger } from './logger.js';
-import { RegisteredGroup } from './types.js';
+} from './db.ts';
+import { isValidGroupFolder } from './group-folder.ts';
+import { logger } from './logger.ts';
+import { RegisteredGroup } from './types.ts';
 
 export interface IpcDeps {
   sendMessage: (jid: string, text: string) => Promise<void>;

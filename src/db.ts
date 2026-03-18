@@ -2,15 +2,15 @@ import Database from 'better-sqlite3';
 import fs from 'fs';
 import path from 'path';
 
-import { ASSISTANT_NAME, DATA_DIR, STORE_DIR } from './config.js';
-import { isValidGroupFolder } from './group-folder.js';
-import { logger } from './logger.js';
+import { ASSISTANT_NAME, DATA_DIR, STORE_DIR } from './config.ts';
+import { isValidGroupFolder } from './group-folder.ts';
+import { logger } from './logger.ts';
 import {
   NewMessage,
   RegisteredGroup,
   ScheduledTask,
   TaskRunLog,
-} from './types.js';
+} from './types.ts';
 
 let db: Database.Database;
 

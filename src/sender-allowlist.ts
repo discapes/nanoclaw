@@ -1,7 +1,7 @@
 import fs from 'fs';
 
-import { SENDER_ALLOWLIST_PATH } from './config.js';
-import { logger } from './logger.js';
+import { SENDER_ALLOWLIST_PATH } from './config.ts';
+import { logger } from './logger.ts';
 
 export interface ChatAllowlistEntry {
   allow: '*' | string[];

@@ -9,24 +9,24 @@ import {
   POLL_INTERVAL,
   TIMEZONE,
   TRIGGER_PATTERN,
-} from './config.js';
-import { startCredentialProxy } from './credential-proxy.js';
-import './channels/index.js';
+} from './config.ts';
+import { startCredentialProxy } from './credential-proxy.ts';
+import './channels/index.ts';
 import {
   getChannelFactory,
   getRegisteredChannelNames,
-} from './channels/registry.js';
+} from './channels/registry.ts';
 import {
   ContainerOutput,
   runContainerAgent,
   writeGroupsSnapshot,
   writeTasksSnapshot,
-} from './container-runner.js';
+} from './container-runner.ts';
 import {
   cleanupOrphans,
   ensureContainerRuntimeRunning,
   PROXY_BIND_HOST,
-} from './container-runtime.js';
+} from './container-runtime.ts';
 import {
   getAllChats,
   getAllRegisteredGroups,
@@ -42,28 +42,28 @@ import {
   setSession,
   storeChatMetadata,
   storeMessage,
-} from './db.js';
-import { GroupQueue } from './group-queue.js';
-import { resolveGroupFolderPath } from './group-folder.js';
-import { startIpcWatcher } from './ipc.js';
-import { findChannel, formatMessages, formatOutbound } from './router.js';
+} from './db.ts';
+import { GroupQueue } from './group-queue.ts';
+import { resolveGroupFolderPath } from './group-folder.ts';
+import { startIpcWatcher } from './ipc.ts';
+import { findChannel, formatMessages, formatOutbound } from './router.ts';
 import {
   restoreRemoteControl,
   startRemoteControl,
   stopRemoteControl,
-} from './remote-control.js';
+} from './remote-control.ts';
 import {
   isSenderAllowed,
   isTriggerAllowed,
   loadSenderAllowlist,
   shouldDropMessage,
-} from './sender-allowlist.js';
-import { startSchedulerLoop } from './task-scheduler.js';
-import { Channel, NewMessage, RegisteredGroup } from './types.js';
-import { logger } from './logger.js';
+} from './sender-allowlist.ts';
+import { startSchedulerLoop } from './task-scheduler.ts';
+import { Channel, NewMessage, RegisteredGroup } from './types.ts';
+import { logger } from './logger.ts';
 
 // Re-export for backwards compatibility during refactor
-export { escapeXml, formatMessages } from './router.js';
+export { escapeXml, formatMessages } from './router.ts';
 
 let lastTimestamp = '';
 let sessions: Record<string, string> = {};
@@ -124,7 +124,7 @@ function registerGroup(jid: string, group: RegisteredGroup): void {
  * Get available groups list for the agent.
  * Returns groups ordered by most recent activity.
  */
-export function getAvailableGroups(): import('./container-runner.js').AvailableGroup[] {
+export function getAvailableGroups(): import('./container-runner.ts').AvailableGroup[] {
   const chats = getAllChats();
   const registeredJids = new Set(Object.keys(registeredGroups));
 

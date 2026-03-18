@@ -3,19 +3,19 @@ import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
 // --- Mocks ---
 
 // Mock registry (registerChannel runs at import time)
-vi.mock('./registry.js', () => ({ registerChannel: vi.fn() }));
+vi.mock('./registry.ts', () => ({ registerChannel: vi.fn() }));
 
 // Mock env reader (used by the factory, not needed in unit tests)
-vi.mock('../env.js', () => ({ readEnvFile: vi.fn(() => ({})) }));
+vi.mock('../env.ts', () => ({ readEnvFile: vi.fn(() => ({})) }));
 
 // Mock config
-vi.mock('../config.js', () => ({
+vi.mock('../config.ts', () => ({
   ASSISTANT_NAME: 'Andy',
   TRIGGER_PATTERN: /^@Andy\b/i,
 }));
 
 // Mock logger
-vi.mock('../logger.js', () => ({
+vi.mock('../logger.ts', () => ({
   logger: {
     debug: vi.fn(),
     info: vi.fn(),
@@ -69,7 +69,7 @@ vi.mock('grammy', () => ({
   },
 }));
 
-import { TelegramChannel, TelegramChannelOpts } from './telegram.js';
+import { TelegramChannel, TelegramChannelOpts } from './telegram.ts';
 
 // --- Test helpers ---
 

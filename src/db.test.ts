@@ -13,7 +13,7 @@ import {
   storeChatMetadata,
   storeMessage,
   updateTask,
-} from './db.js';
+} from './db.ts';
 
 beforeEach(() => {
   _initTestDatabase();

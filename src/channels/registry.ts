@@ -3,7 +3,7 @@ import {
   OnInboundMessage,
   OnChatMetadata,
   RegisteredGroup,
-} from '../types.js';
+} from '../types.ts';
 
 export interface ChannelOpts {
   onMessage: OnInboundMessage;

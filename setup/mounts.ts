@@ -6,9 +6,9 @@ import fs from 'fs';
 import path from 'path';
 import os from 'os';
 
-import { logger } from '../src/logger.js';
-import { isRoot } from './platform.js';
-import { emitStatus } from './status.js';
+import { logger } from '../src/logger.ts';
+import { isRoot } from './platform.ts';
+import { emitStatus } from './status.ts';
 
 function parseArgs(args: string[]): { empty: boolean; json: string } {
   let empty = false;

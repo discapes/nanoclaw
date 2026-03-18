@@ -5,9 +5,9 @@
 import { execSync } from 'child_process';
 import path from 'path';
 
-import { logger } from '../src/logger.js';
-import { commandExists } from './platform.js';
-import { emitStatus } from './status.js';
+import { logger } from '../src/logger.ts';
+import { commandExists } from './platform.ts';
+import { emitStatus } from './status.ts';
 
 function parseArgs(args: string[]): { runtime: string } {
   let runtime = '';
