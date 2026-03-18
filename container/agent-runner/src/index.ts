@@ -14,7 +14,7 @@
  *   Final marker after loop ends signals completion.
  */
 
-const RUNNER_VERSION = '1.4';
+const RUNNER_VERSION = '1.5';
 
 import fs from 'fs';
 import path from 'path';
@@ -141,7 +141,7 @@ function truncateMiddle(s: string, max = 1000): string {
   return s.slice(0, half) + ' ... ' + s.slice(-half);
 }
 
-function formatMessage(message: any): string {
+function formatMessage(message: any): { label: string; text: string } {
   const type = message.type;
 
   if (type === 'system' && message.subtype === 'init') {
@@ -150,22 +150,29 @@ function formatMessage(message: any): string {
     const mcps = message.mcp_servers
       ?.map((s: any) => `${s.name}(${s.status})`)
       .join(', ');
-    return `Session: ${message.session_id || 'new'} | model=${message.model} | ${tools} tools, ${skills} skills | MCP: ${mcps || 'none'}`;
+    return {
+      label: 'init',
+      text: `Session: ${message.session_id || 'new'} | model=${message.model} | ${tools} tools, ${skills} skills | MCP: ${mcps || 'none'}`,
+    };
   }
 
   if (type === 'system' && message.subtype === 'task_notification') {
-    return `Task ${message.task_id}: ${message.status} — ${message.summary}`;
+    return {
+      label: 'task',
+      text: `${message.task_id}: ${message.status} — ${message.summary}`,
+    };
   }
 
   if (type === 'system') {
-    return `system/${message.subtype}`;
+    return { label: `system/${message.subtype}`, text: '' };
   }
 
   if (type === 'assistant' && message.message?.content) {
-    const parts: string[] = [];
+    const texts: string[] = [];
+    const tools: string[] = [];
     for (const c of message.message.content) {
       if (c.type === 'text') {
-        parts.push(truncateMiddle(c.text));
+        texts.push(truncateMiddle(c.text));
       } else if (c.type === 'tool_use') {
         const params = Object.entries(c.input || {})
           .map(
@@ -173,36 +180,56 @@ function formatMessage(message: any): string {
               `${k}=${truncateMiddle(typeof v === 'string' ? v : JSON.stringify(v), 200)}`,
           )
           .join(', ');
-        parts.push(`→ ${c.name}(${params})`);
+        tools.push(`${c.name}(${params})`);
       }
     }
-    return parts.join('\n           ');
+    if (tools.length > 0 && texts.length === 0) {
+      return { label: 'tool_use', text: tools.join(', ') };
+    }
+    if (tools.length > 0) {
+      return {
+        label: 'assistant',
+        text: texts.join('  ↵ ') + ' | tools: ' + tools.join(', '),
+      };
+    }
+    return { label: 'assistant', text: texts.join('  ↵ ') };
   }
 
   if (type === 'user' && message.message?.content) {
     const content = message.message.content;
-    if (typeof content === 'string') return truncateMiddle(content);
+    if (typeof content === 'string')
+      return { label: 'user', text: truncateMiddle(content) };
     if (Array.isArray(content)) {
-      return content
-        .map((c: any) => {
-          if (c.type === 'tool_result') {
-            const status = c.is_error ? 'ERROR' : 'ok';
-            const text =
-              typeof c.content === 'string'
-                ? c.content
-                : JSON.stringify(c.content);
-            return `← tool_result [${status}]: ${truncateMiddle(text, 500)}`;
-          }
-          if (c.type === 'text') return truncateMiddle(c.text);
-          return c.type;
-        })
-        .join('\n           ');
+      const parts = content.map((c: any) => {
+        if (c.type === 'tool_result') {
+          const text =
+            typeof c.content === 'string'
+              ? c.content
+              : JSON.stringify(c.content);
+          const prefix = c.is_error ? 'ERROR: ' : '';
+          return {
+            label: 'tool_result',
+            text: prefix + truncateMiddle(text, 500),
+          };
+        }
+        if (c.type === 'text')
+          return { label: 'user', text: truncateMiddle(c.text) };
+        return { label: c.type, text: '' };
+      });
+      if (parts.length === 1) return parts[0];
+      return {
+        label: parts[0].label,
+        text: parts.map((p) => p.text).join('  ↵ '),
+      };
     }
   }
 
   if (type === 'rate_limit_event') {
     const r = message.rate_limit_info || {};
-    return `${r.rateLimitType} ${r.status}${r.resetsAt ? ` | resets ${new Date(r.resetsAt * 1000).toISOString()}` : ''}`;
+    return {
+      label: 'rate_limit',
+      text: `${r.rateLimitType} ${r.status}${r.resetsAt ? ` | resets ${new Date(r.resetsAt * 1000).toISOString()}` : ''}`,
+    };
   }
 
   if (type === 'result') {
@@ -222,10 +249,13 @@ function formatMessage(message: any): string {
     ]
       .filter(Boolean)
       .join(' ');
-    return `${message.subtype} | ${message.num_turns} turns | ${dur} | ${cost} | ${tokens}`;
+    return {
+      label: 'result',
+      text: `${message.subtype} | ${message.num_turns} turns | ${dur} | ${cost} | ${tokens}`,
+    };
   }
 
-  return truncateMiddle(JSON.stringify(message), 500);
+  return { label: type, text: truncateMiddle(JSON.stringify(message), 500) };
 }
 
 function getSessionSummary(
@@ -480,7 +510,14 @@ async function runQuery(
   lastAssistantUuid?: string;
   closedDuringQuery: boolean;
 }> {
+  let newSessionId: string | undefined;
+  let lastAssistantUuid: string | undefined;
+  let messageCount = 0;
+  let resultCount = 0;
+
   const stream = new MessageStream();
+  messageCount++;
+  log(`#${messageCount} user: ${truncateMiddle(prompt)}`);
   stream.push(prompt);
 
   // Poll IPC for follow-up messages and _close sentinel during the query
@@ -508,17 +545,13 @@ async function runQuery(
     }
     const messages = drainIpcInput();
     for (const text of messages) {
-      log(`Piping IPC message into active query (${text.length} chars)`);
+      messageCount++;
+      log(`#${messageCount} user: ${truncateMiddle(text)}`);
       stream.push(text);
     }
     setTimeout(pollIpcDuringQuery, IPC_POLL_MS);
   };
   setTimeout(pollIpcDuringQuery, IPC_POLL_MS);
-
-  let newSessionId: string | undefined;
-  let lastAssistantUuid: string | undefined;
-  let messageCount = 0;
-  let resultCount = 0;
 
   // Load global CLAUDE.md as additional system context (shared across all groups)
   const globalClaudeMdPath = '/workspace/global/CLAUDE.md';
@@ -622,11 +655,8 @@ async function runQuery(
     },
   })) {
     messageCount++;
-    const msgType =
-      message.type === 'system'
-        ? `system/${(message as { subtype?: string }).subtype}`
-        : message.type;
-    log(`[msg #${messageCount}] ${msgType}: ${formatMessage(message)}`);
+    const { label, text } = formatMessage(message);
+    log(`#${messageCount} ${label}:${text ? ' ' + text : ''}`);
 
     if (message.type === 'assistant' && 'uuid' in message) {
       lastAssistantUuid = (message as { uuid: string }).uuid;
