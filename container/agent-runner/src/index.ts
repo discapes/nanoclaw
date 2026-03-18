@@ -398,6 +398,12 @@ async function runQuery(
     log(`Additional directories: ${extraDirs.join(', ')}`);
   }
 
+  const TOOL_EMOJI: Record<string, string> = {
+    Bash: '⚡', Read: '👁', Write: '✍️', Edit: '✏️',
+    Glob: '📂', Grep: '🔎', WebSearch: '🔍', WebFetch: '🌐',
+  };
+  const toolsUsed = new Set<string>();
+
   for await (const message of query({
     prompt: stream,
     options: {
@@ -443,6 +449,7 @@ async function runQuery(
     messageCount++;
     const msgType = message.type === 'system' ? `system/${(message as { subtype?: string }).subtype}` : message.type;
     log(`[msg #${messageCount}] type=${msgType}`);
+    log(JSON.stringify(message));
 
     if (message.type === 'assistant' && 'uuid' in message) {
       lastAssistantUuid = (message as { uuid: string }).uuid;
@@ -452,13 +459,18 @@ async function runQuery(
     if (message.type === 'assistant' && 'message' in message) {
       const msg = (message as any).message;
       if (Array.isArray(msg?.content)) {
+        for (const c of msg.content) {
+          if (c.type === 'tool_use' && c.name) toolsUsed.add(c.name);
+        }
         const text = msg.content
           .filter((c: any) => c.type === 'text')
           .map((c: any) => c.text)
           .join('\n')
           .trim();
         if (text) {
-          writeOutput({ status: 'success', result: text, newSessionId });
+          const emojis = [...toolsUsed].map(t => TOOL_EMOJI[t]).filter(Boolean).join('');
+          const output = emojis ? `${text} ${emojis}` : text;
+          writeOutput({ status: 'success', result: output, newSessionId });
         }
       }
     }
