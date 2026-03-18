@@ -131,7 +131,7 @@ function log(message: string): void {
 }
 
 function collapse(s: string): string {
-  return s.replace(/\s*\n\s*/g, '  ↵ ').trim();
+  return s.trim().replace(/\s*\n\s*/g, '  ↵ ');
 }
 
 function extractUserMessages(s: string): string | null {
