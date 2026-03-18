@@ -1,8 +1,9 @@
-import { ChildProcess } from 'child_process';
+import { ChildProcess, execSync } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 
 import { DATA_DIR, MAX_CONCURRENT_CONTAINERS } from './config.js';
+import { CONTAINER_RUNTIME_BIN } from './container-runtime.js';
 import { logger } from './logger.js';
 
 interface QueuedTask {
@@ -347,9 +348,6 @@ export class GroupQueue {
   async shutdown(_gracePeriodMs: number): Promise<void> {
     this.shuttingDown = true;
 
-    // Count active containers but don't kill them — they'll finish on their own
-    // via idle timeout or container timeout. The --rm flag cleans them up on exit.
-    // This prevents WhatsApp reconnection restarts from killing working agents.
     const activeContainers: string[] = [];
     for (const [jid, state] of this.groups) {
       if (state.process && !state.process.killed && state.containerName) {
@@ -358,8 +356,20 @@ export class GroupQueue {
     }
 
     logger.info(
-      { activeCount: this.activeCount, detachedContainers: activeContainers },
-      'GroupQueue shutting down (containers detached, not killed)',
+      { activeCount: this.activeCount, containers: activeContainers },
+      'GroupQueue shutting down, stopping containers',
     );
+
+    for (const name of activeContainers) {
+      try {
+        execSync(`${CONTAINER_RUNTIME_BIN} stop -t 10 ${name}`, {
+          stdio: 'pipe',
+          timeout: 15000,
+        });
+        logger.info({ container: name }, 'Container stopped');
+      } catch {
+        logger.warn({ container: name }, 'Failed to stop container');
+      }
+    }
   }
 }
