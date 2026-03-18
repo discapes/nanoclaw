@@ -401,9 +401,9 @@ async function runQuery(
   const TOOL_EMOJI: Record<string, string> = {
     Bash: '⚡', Read: '👁', Write: '✍️', Edit: '✏️',
     Glob: '📂', Grep: '🔎', WebSearch: '🔍', WebFetch: '🌐',
-    mcp__nanoclaw__schedule_task: '[⏰📅]', mcp__nanoclaw__list_tasks: '[⏰📋]',
-    mcp__nanoclaw__pause_task: '[⏰⏸]', mcp__nanoclaw__resume_task: '[⏰▶]',
-    mcp__nanoclaw__cancel_task: '[⏰❌]', mcp__nanoclaw__update_task: '[⏰✏️]',
+    mcp__nanoclaw__schedule_task: '\\[⏰📅\\]', mcp__nanoclaw__list_tasks: '\\[⏰📋\\]',
+    mcp__nanoclaw__pause_task: '\\[⏰⏸\\]', mcp__nanoclaw__resume_task: '\\[⏰▶\\]',
+    mcp__nanoclaw__cancel_task: '\\[⏰❌\\]', mcp__nanoclaw__update_task: '\\[⏰✏️\\]',
     'mcp__agent-control__stop_container': '🛑', 'mcp__agent-control__reset_session': '🔄',
     Skill: '🧩',
   };
