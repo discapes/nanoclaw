@@ -130,7 +130,12 @@ function log(message: string): void {
   console.error(`[agent-runner] ${message}`);
 }
 
+function collapse(s: string): string {
+  return s.replace(/\s*\n\s*/g, '  ↵ ').trim();
+}
+
 function truncateMiddle(s: string, max = 1000): string {
+  s = collapse(s);
   if (s.length <= max) return s;
   const half = Math.floor((max - 5) / 2);
   return s.slice(0, half) + ' ... ' + s.slice(-half);
@@ -195,6 +200,11 @@ function formatMessage(message: any): string {
     }
   }
 
+  if (type === 'rate_limit_event') {
+    const r = message.rate_limit_info || {};
+    return `${r.rateLimitType} ${r.status}${r.resetsAt ? ` | resets ${new Date(r.resetsAt * 1000).toISOString()}` : ''}`;
+  }
+
   if (type === 'result') {
     const u = message.usage || {};
     const cost = message.total_cost_usd
@@ -212,13 +222,10 @@ function formatMessage(message: any): string {
     ]
       .filter(Boolean)
       .join(' ');
-    const result = message.result
-      ? ` | "${truncateMiddle(message.result, 200)}"`
-      : '';
-    return `${message.subtype} | ${message.num_turns} turns | ${dur} | ${cost} | ${tokens}${result}`;
+    return `${message.subtype} | ${message.num_turns} turns | ${dur} | ${cost} | ${tokens}`;
   }
 
-  return JSON.stringify(message).slice(0, 500);
+  return truncateMiddle(JSON.stringify(message), 500);
 }
 
 function getSessionSummary(
