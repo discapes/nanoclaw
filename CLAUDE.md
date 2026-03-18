@@ -32,6 +32,12 @@ Single Node.js process with skill-based channel system. Channels (WhatsApp, Tele
 | `/qodo-pr-resolver` | Fetch and fix Qodo PR review issues interactively or in batch |
 | `/get-qodo-rules` | Load org- and repo-level coding rules from Qodo before code tasks |
 
+## TypeScript Conventions
+
+- No build step — TypeScript runs directly via `node --strip-types`.
+- Local imports use `.ts` extensions (e.g. `from './config.ts'`), not `.js`.
+- Type-only imports must use the `type` keyword (`import type { Foo }` or `import { type Foo, bar }`). Enforced by `verbatimModuleSyntax` in tsconfig.
+
 ## Development
 
 Run commands directly—don't tell the user to run them.

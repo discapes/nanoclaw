@@ -7,7 +7,7 @@ import {
   isSenderAllowed,
   isTriggerAllowed,
   loadSenderAllowlist,
-  SenderAllowlistConfig,
+  type SenderAllowlistConfig,
   shouldDropMessage,
 } from './sender-allowlist.ts';
 

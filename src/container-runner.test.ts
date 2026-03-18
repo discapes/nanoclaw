@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
-import { type EventEmitter } from 'events';
+import { EventEmitter } from 'events';
 import { PassThrough } from 'stream';
 
 // Sentinel markers must match container-runner.ts
