@@ -65,6 +65,20 @@ function downloadToFile(url: string, dest: string): Promise<void> {
   });
 }
 
+function truncate(text: string, max = 200): string {
+  if (text.length <= max) return text;
+  const keep = Math.floor((max - 3) / 2);
+  return `${text.slice(0, keep)}...${text.slice(-keep)}`;
+}
+
+function replyPrefix(msg: any): string {
+  if (!msg) return '';
+  const sender = msg.from?.first_name || msg.from?.username || '';
+  const text = msg.text || msg.caption || '';
+  if (!text) return '';
+  return `[Replying to ${sender}: ${truncate(text)}]\n`;
+}
+
 export class TelegramChannel implements Channel {
   name = 'telegram';
 
@@ -115,7 +129,8 @@ export class TelegramChannel implements Channel {
       }
 
       const chatJid = `tg:${ctx.chat.id}`;
-      let content = ctx.message.text;
+      let content =
+        replyPrefix(ctx.message.reply_to_message) + ctx.message.text;
       const timestamp = new Date(ctx.message.date * 1000).toISOString();
       const senderName =
         ctx.from?.first_name ||
@@ -201,6 +216,7 @@ export class TelegramChannel implements Channel {
         ctx.from?.username ||
         ctx.from?.id?.toString() ||
         'Unknown';
+      const reply = replyPrefix(ctx.message.reply_to_message);
       const caption = ctx.message.caption ? ` ${ctx.message.caption}` : '';
 
       const isGroup =
@@ -217,7 +233,7 @@ export class TelegramChannel implements Channel {
         chat_jid: chatJid,
         sender: ctx.from?.id?.toString() || '',
         sender_name: senderName,
-        content: `${placeholder}${caption}`,
+        content: `${reply}${placeholder}${caption}`,
         timestamp,
         is_from_me: false,
       });
@@ -247,6 +263,7 @@ export class TelegramChannel implements Channel {
         content = `[Voice message — transcription failed: ${err.message}]`;
       }
 
+      const reply = replyPrefix(ctx.message.reply_to_message);
       const caption = ctx.message.caption ? ` ${ctx.message.caption}` : '';
       const timestamp = new Date(ctx.message.date * 1000).toISOString();
       const senderName =
@@ -268,7 +285,7 @@ export class TelegramChannel implements Channel {
         chat_jid: chatJid,
         sender: ctx.from?.id?.toString() || '',
         sender_name: senderName,
-        content: `${content}${caption}`,
+        content: `${reply}${content}${caption}`,
         timestamp,
         is_from_me: false,
       });

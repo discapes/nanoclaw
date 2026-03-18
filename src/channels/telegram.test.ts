@@ -462,6 +462,82 @@ describe('TelegramChannel', () => {
     });
   });
 
+  // --- Reply context ---
+
+  describe('reply context', () => {
+    it('prepends reply context when replying to a message', async () => {
+      const opts = createTestOpts();
+      const channel = new TelegramChannel('test-token', opts);
+      await channel.connect();
+
+      const ctx = createTextCtx({ text: 'I disagree' }) as any;
+      ctx.message.reply_to_message = {
+        text: 'The earth is flat',
+        from: { first_name: 'Bob' },
+      };
+      await triggerTextMessage(ctx);
+
+      expect(opts.onMessage).toHaveBeenCalledWith(
+        'tg:100200300',
+        expect.objectContaining({
+          content: '[Replying to Bob: The earth is flat]\nI disagree',
+        }),
+      );
+    });
+
+    it('truncates long replied messages', async () => {
+      const opts = createTestOpts();
+      const channel = new TelegramChannel('test-token', opts);
+      await channel.connect();
+
+      const longText = 'a'.repeat(300);
+      const ctx = createTextCtx({ text: 'wow' }) as any;
+      ctx.message.reply_to_message = {
+        text: longText,
+        from: { first_name: 'Bob' },
+      };
+      await triggerTextMessage(ctx);
+
+      const call = (opts.onMessage as any).mock.calls[0][1];
+      expect(call.content).toContain('...');
+      expect(call.content.length).toBeLessThan(300);
+    });
+
+    it('no prefix when not replying', async () => {
+      const opts = createTestOpts();
+      const channel = new TelegramChannel('test-token', opts);
+      await channel.connect();
+
+      const ctx = createTextCtx({ text: 'just a message' });
+      await triggerTextMessage(ctx);
+
+      expect(opts.onMessage).toHaveBeenCalledWith(
+        'tg:100200300',
+        expect.objectContaining({ content: 'just a message' }),
+      );
+    });
+
+    it('adds reply context to non-text messages', async () => {
+      const opts = createTestOpts();
+      const channel = new TelegramChannel('test-token', opts);
+      await channel.connect();
+
+      const ctx = createMediaCtx({}) as any;
+      ctx.message.reply_to_message = {
+        text: 'Check this out',
+        from: { first_name: 'Alice' },
+      };
+      await triggerMediaMessage('message:photo', ctx);
+
+      expect(opts.onMessage).toHaveBeenCalledWith(
+        'tg:100200300',
+        expect.objectContaining({
+          content: '[Replying to Alice: Check this out]\n[Photo]',
+        }),
+      );
+    });
+  });
+
   // --- @mention translation ---
 
   describe('@mention translation', () => {
