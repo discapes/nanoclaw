@@ -472,8 +472,9 @@ async function runQuery(
           .map((c: any) => c.text)
           .join('\n')
           .trim();
+        const visible = text.replace(/<internal>[\s\S]*?<\/internal>/g, '').trim();
         if (text) {
-          const emojis = [...toolsUsed].map(t => TOOL_EMOJI[t] || '🔧').join('');
+          const emojis = visible ? [...toolsUsed].map(t => TOOL_EMOJI[t] || '🔧').join('') : '';
           toolsUsed.clear();
           const output = emojis ? `${text} ${emojis}` : text;
           writeOutput({ status: 'success', result: output, newSessionId });
