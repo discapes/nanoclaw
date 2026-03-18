@@ -14,7 +14,7 @@
  *   Final marker after loop ends signals completion.
  */
 
-const RUNNER_VERSION = 'v1';
+const RUNNER_VERSION = '1.3';
 
 import fs from 'fs';
 import path from 'path';
@@ -483,7 +483,7 @@ async function runQuery(
         type: 'preset' as const,
         preset: 'claude_code' as const,
         append:
-          `NanoClaw ${containerInput.nanoclawVersion || '?'}, agent runner ${RUNNER_VERSION}` +
+          `Your NanoClaw version IS: ${containerInput.nanoclawVersion || '?'}. Your Agent Runner version IS: ${RUNNER_VERSION}.` +
           (globalClaudeMd ? `\n\n${globalClaudeMd}` : ''),
       },
       allowedTools: [
