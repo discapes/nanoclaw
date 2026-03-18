@@ -66,15 +66,15 @@ function downloadToFile(url: string, dest: string): Promise<void> {
 }
 
 /**
- * Save a file to the group's attachments directory with collision-safe naming.
- * Returns the container-visible path (/workspace/group/attachments/...).
+ * Save a file to the group's inbox directory with collision-safe naming.
+ * Returns the container-visible path (/workspace/group/inbox/...).
  */
 function saveAttachment(
   groupFolder: string,
   filename: string,
   tmpPath: string,
 ): string {
-  const dir = path.join(GROUPS_DIR, groupFolder, 'attachments');
+  const dir = path.join(GROUPS_DIR, groupFolder, 'inbox');
   fs.mkdirSync(dir, { recursive: true });
 
   const ext = path.extname(filename);
@@ -87,7 +87,7 @@ function saveAttachment(
   }
 
   fs.renameSync(tmpPath, dest);
-  return `/workspace/group/attachments/${path.basename(dest)}`;
+  return `/workspace/group/inbox/${path.basename(dest)}`;
 }
 
 function truncate(text: string, max = 200): string {

@@ -74,7 +74,7 @@ server.tool(
     filePath: z
       .string()
       .describe(
-        'Absolute path to the file inside the container (e.g., /workspace/group/attachments/chart.png)',
+        'Absolute path to the file inside the container (e.g., /workspace/group/outbox/chart.png)',
       ),
     caption: z
       .string()

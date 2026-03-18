@@ -221,7 +221,7 @@ async function triggerMediaMessage(
 describe('TelegramChannel', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    fs.mkdirSync('/tmp/nanoclaw-test-groups/test-group/attachments', {
+    fs.mkdirSync('/tmp/nanoclaw-test-groups/test-group/inbox', {
       recursive: true,
     });
   });
@@ -683,7 +683,7 @@ describe('TelegramChannel', () => {
         'tg:100200300',
         expect.objectContaining({
           content: expect.stringContaining(
-            '[Image uploaded, saved to /workspace/group/attachments/photo_1.jpg]',
+            '[Image uploaded, saved to /workspace/group/inbox/photo_1.jpg]',
           ),
         }),
       );
@@ -737,7 +737,7 @@ describe('TelegramChannel', () => {
         'tg:100200300',
         expect.objectContaining({
           content: expect.stringContaining(
-            '[Video uploaded, saved to /workspace/group/attachments/',
+            '[Video uploaded, saved to /workspace/group/inbox/',
           ),
         }),
       );
@@ -793,7 +793,7 @@ describe('TelegramChannel', () => {
         'tg:100200300',
         expect.objectContaining({
           content: expect.stringContaining(
-            '[Audio file uploaded, saved to /workspace/group/attachments/',
+            '[Audio file uploaded, saved to /workspace/group/inbox/',
           ),
         }),
       );
@@ -813,7 +813,7 @@ describe('TelegramChannel', () => {
         'tg:100200300',
         expect.objectContaining({
           content: expect.stringContaining(
-            '[File uploaded, saved to /workspace/group/attachments/report.pdf]',
+            '[File uploaded, saved to /workspace/group/inbox/report.pdf]',
           ),
         }),
       );
@@ -831,7 +831,7 @@ describe('TelegramChannel', () => {
         'tg:100200300',
         expect.objectContaining({
           content: expect.stringContaining(
-            '[File uploaded, saved to /workspace/group/attachments/file]',
+            '[File uploaded, saved to /workspace/group/inbox/file]',
           ),
         }),
       );
