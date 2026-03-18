@@ -2,7 +2,7 @@
  * Container Runner for NanoClaw
  * Spawns agent execution in containers and handles IPC
  */
-import { ChildProcess, exec, execSync, spawn } from 'child_process';
+import { type ChildProcess, exec, execSync, spawn } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 
@@ -27,7 +27,7 @@ import {
 } from './container-runtime.ts';
 import { detectAuthMode } from './credential-proxy.ts';
 import { validateAdditionalMounts } from './mount-security.ts';
-import { RegisteredGroup } from './types.ts';
+import type { RegisteredGroup } from './types.ts';
 
 // Sentinel markers for robust output parsing (must match agent-runner)
 const OUTPUT_START_MARKER = '---NANOCLAW_OUTPUT_START---';

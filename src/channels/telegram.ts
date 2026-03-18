@@ -4,8 +4,8 @@ import { Api, Bot } from 'grammy';
 import { ASSISTANT_NAME, TRIGGER_PATTERN } from '../config.ts';
 import { readEnvFile } from '../env.ts';
 import { logger } from '../logger.ts';
-import { registerChannel, ChannelOpts } from './registry.ts';
-import {
+import { registerChannel, type ChannelOpts } from './registry.ts';
+import type {
   Channel,
   OnChatMetadata,
   OnInboundMessage,

@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
-import { EventEmitter } from 'events';
+import { type EventEmitter } from 'events';
 import { PassThrough } from 'stream';
 
 // Sentinel markers must match container-runner.ts
@@ -86,7 +86,7 @@ vi.mock('child_process', async () => {
   };
 });
 
-import { runContainerAgent, ContainerOutput } from './container-runner.ts';
+import { runContainerAgent, type ContainerOutput } from './container-runner.ts';
 import type { RegisteredGroup } from './types.ts';
 
 const testGroup: RegisteredGroup = {

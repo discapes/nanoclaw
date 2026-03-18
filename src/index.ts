@@ -17,7 +17,7 @@ import {
   getRegisteredChannelNames,
 } from './channels/registry.ts';
 import {
-  ContainerOutput,
+  type ContainerOutput,
   runContainerAgent,
   writeGroupsSnapshot,
   writeTasksSnapshot,
@@ -59,7 +59,7 @@ import {
   shouldDropMessage,
 } from './sender-allowlist.ts';
 import { startSchedulerLoop } from './task-scheduler.ts';
-import { Channel, NewMessage, RegisteredGroup } from './types.ts';
+import type { Channel, NewMessage, RegisteredGroup } from './types.ts';
 import { logger } from './logger.ts';
 
 // Re-export for backwards compatibility during refactor

@@ -1,4 +1,4 @@
-import { ChildProcess } from 'child_process';
+import { type ChildProcess } from 'child_process';
 import { CronExpressionParser } from 'cron-parser';
 import fs from 'fs';
 
@@ -9,7 +9,7 @@ import {
   TIMEZONE,
 } from './config.ts';
 import {
-  ContainerOutput,
+  type ContainerOutput,
   runContainerAgent,
   writeTasksSnapshot,
 } from './container-runner.ts';
@@ -24,7 +24,7 @@ import {
 import { GroupQueue } from './group-queue.ts';
 import { resolveGroupFolderPath } from './group-folder.ts';
 import { logger } from './logger.ts';
-import { RegisteredGroup, ScheduledTask } from './types.ts';
+import type { RegisteredGroup, ScheduledTask } from './types.ts';
 
 /**
  * Compute the next run time for a recurring task, anchored to the

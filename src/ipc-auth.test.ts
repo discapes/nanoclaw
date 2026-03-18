@@ -8,8 +8,8 @@ import {
   getTaskById,
   setRegisteredGroup,
 } from './db.ts';
-import { processTaskIpc, IpcDeps } from './ipc.ts';
-import { RegisteredGroup } from './types.ts';
+import { processTaskIpc, type IpcDeps } from './ipc.ts';
+import type { RegisteredGroup } from './types.ts';
 
 // Set up registered groups used across tests
 const MAIN_GROUP: RegisteredGroup = {

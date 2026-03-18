@@ -7,7 +7,7 @@ import {
   formatOutbound,
   stripInternalTags,
 } from './router.ts';
-import { NewMessage } from './types.ts';
+import type { NewMessage } from './types.ts';
 
 function makeMsg(overrides: Partial<NewMessage> = {}): NewMessage {
   return {

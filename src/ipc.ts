@@ -4,7 +4,7 @@ import path from 'path';
 import { CronExpressionParser } from 'cron-parser';
 
 import { DATA_DIR, IPC_POLL_INTERVAL, TIMEZONE } from './config.ts';
-import { AvailableGroup, writeTasksSnapshot } from './container-runner.ts';
+import { type AvailableGroup, writeTasksSnapshot } from './container-runner.ts';
 import {
   createTask,
   deleteTask,
@@ -14,7 +14,7 @@ import {
 } from './db.ts';
 import { isValidGroupFolder } from './group-folder.ts';
 import { logger } from './logger.ts';
-import { RegisteredGroup } from './types.ts';
+import type { RegisteredGroup } from './types.ts';
 
 export interface IpcDeps {
   sendMessage: (jid: string, text: string) => Promise<void>;

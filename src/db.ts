@@ -5,7 +5,7 @@ import path from 'path';
 import { ASSISTANT_NAME, DATA_DIR, STORE_DIR } from './config.ts';
 import { isValidGroupFolder } from './group-folder.ts';
 import { logger } from './logger.ts';
-import {
+import type {
   NewMessage,
   RegisteredGroup,
   ScheduledTask,

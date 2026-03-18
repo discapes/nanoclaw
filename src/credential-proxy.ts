@@ -10,9 +10,9 @@
  *             Proxy injects real OAuth token on that exchange request;
  *             subsequent requests carry the temp key which is valid as-is.
  */
-import { createServer, Server } from 'http';
+import { createServer, type Server } from 'http';
 import { request as httpsRequest } from 'https';
-import { request as httpRequest, RequestOptions } from 'http';
+import { request as httpRequest, type RequestOptions } from 'http';
 
 import { readEnvFile } from './env.ts';
 import { logger } from './logger.ts';

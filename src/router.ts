@@ -1,4 +1,4 @@
-import { Channel, NewMessage } from './types.ts';
+import type { Channel, NewMessage } from './types.ts';
 import { formatLocalTime } from './timezone.ts';
 
 export function escapeXml(s: string): string {

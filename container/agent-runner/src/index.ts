@@ -22,8 +22,8 @@ import {
   query,
   createSdkMcpServer,
   tool,
-  HookCallback,
-  PreCompactHookInput,
+  type HookCallback,
+  type PreCompactHookInput,
 } from '@anthropic-ai/claude-agent-sdk';
 import { fileURLToPath } from 'url';
 
