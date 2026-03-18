@@ -14,7 +14,7 @@
  *   Final marker after loop ends signals completion.
  */
 
-const RUNNER_VERSION = '1.3';
+const RUNNER_VERSION = '1.4';
 
 import fs from 'fs';
 import path from 'path';
@@ -128,6 +128,97 @@ function writeOutput(output: ContainerOutput): void {
 
 function log(message: string): void {
   console.error(`[agent-runner] ${message}`);
+}
+
+function truncateMiddle(s: string, max = 1000): string {
+  if (s.length <= max) return s;
+  const half = Math.floor((max - 5) / 2);
+  return s.slice(0, half) + ' ... ' + s.slice(-half);
+}
+
+function formatMessage(message: any): string {
+  const type = message.type;
+
+  if (type === 'system' && message.subtype === 'init') {
+    const tools = message.tools?.length ?? 0;
+    const skills = message.skills?.length ?? 0;
+    const mcps = message.mcp_servers
+      ?.map((s: any) => `${s.name}(${s.status})`)
+      .join(', ');
+    return `Session: ${message.session_id || 'new'} | model=${message.model} | ${tools} tools, ${skills} skills | MCP: ${mcps || 'none'}`;
+  }
+
+  if (type === 'system' && message.subtype === 'task_notification') {
+    return `Task ${message.task_id}: ${message.status} — ${message.summary}`;
+  }
+
+  if (type === 'system') {
+    return `system/${message.subtype}`;
+  }
+
+  if (type === 'assistant' && message.message?.content) {
+    const parts: string[] = [];
+    for (const c of message.message.content) {
+      if (c.type === 'text') {
+        parts.push(truncateMiddle(c.text));
+      } else if (c.type === 'tool_use') {
+        const params = Object.entries(c.input || {})
+          .map(
+            ([k, v]) =>
+              `${k}=${truncateMiddle(typeof v === 'string' ? v : JSON.stringify(v), 200)}`,
+          )
+          .join(', ');
+        parts.push(`→ ${c.name}(${params})`);
+      }
+    }
+    return parts.join('\n           ');
+  }
+
+  if (type === 'user' && message.message?.content) {
+    const content = message.message.content;
+    if (typeof content === 'string') return truncateMiddle(content);
+    if (Array.isArray(content)) {
+      return content
+        .map((c: any) => {
+          if (c.type === 'tool_result') {
+            const status = c.is_error ? 'ERROR' : 'ok';
+            const text =
+              typeof c.content === 'string'
+                ? c.content
+                : JSON.stringify(c.content);
+            return `← tool_result [${status}]: ${truncateMiddle(text, 500)}`;
+          }
+          if (c.type === 'text') return truncateMiddle(c.text);
+          return c.type;
+        })
+        .join('\n           ');
+    }
+  }
+
+  if (type === 'result') {
+    const u = message.usage || {};
+    const cost = message.total_cost_usd
+      ? `$${message.total_cost_usd.toFixed(4)}`
+      : '';
+    const dur = message.duration_api_ms
+      ? `${(message.duration_api_ms / 1000).toFixed(1)}s`
+      : '';
+    const tokens = [
+      u.input_tokens && `in:${u.input_tokens}`,
+      u.output_tokens && `out:${u.output_tokens}`,
+      u.cache_read_input_tokens && `cache_read:${u.cache_read_input_tokens}`,
+      u.cache_creation_input_tokens &&
+        `cache_write:${u.cache_creation_input_tokens}`,
+    ]
+      .filter(Boolean)
+      .join(' ');
+    const result = message.result
+      ? ` | "${truncateMiddle(message.result, 200)}"`
+      : '';
+    return `${message.subtype} | ${message.num_turns} turns | ${dur} | ${cost} | ${tokens}${result}`;
+  }
+
+  return JSON.stringify(message).slice(0, 500);
 }
 
 function getSessionSummary(
@@ -528,8 +619,7 @@ async function runQuery(
       message.type === 'system'
         ? `system/${(message as { subtype?: string }).subtype}`
         : message.type;
-    log(`[msg #${messageCount}] type=${msgType}`);
-    log(JSON.stringify(message));
+    log(`[msg #${messageCount}] ${msgType}: ${formatMessage(message)}`);
 
     if (message.type === 'assistant' && 'uuid' in message) {
       lastAssistantUuid = (message as { uuid: string }).uuid;
@@ -563,26 +653,10 @@ async function runQuery(
 
     if (message.type === 'system' && message.subtype === 'init') {
       newSessionId = message.session_id;
-      log(`Session initialized: ${newSessionId}`);
-    }
-
-    if (
-      message.type === 'system' &&
-      (message as { subtype?: string }).subtype === 'task_notification'
-    ) {
-      const tn = message as {
-        task_id: string;
-        status: string;
-        summary: string;
-      };
-      log(
-        `Task notification: task=${tn.task_id} status=${tn.status} summary=${tn.summary}`,
-      );
     }
 
     if (message.type === 'result') {
       resultCount++;
-      log(`Result #${resultCount}: subtype=${message.subtype}`);
       writeOutput({
         status: 'success',
         result: null,
