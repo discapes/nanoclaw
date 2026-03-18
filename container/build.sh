@@ -16,8 +16,19 @@ echo "Image: ${IMAGE_NAME}:${TAG}"
 ${CONTAINER_RUNTIME} build -t "${IMAGE_NAME}:${TAG}" .
 
 echo ""
-echo "Build complete!"
-echo "Image: ${IMAGE_NAME}:${TAG}"
-echo ""
-echo "Test with:"
-echo "  echo '{\"prompt\":\"What is 2+2?\",\"groupFolder\":\"test\",\"chatJid\":\"test@g.us\",\"isMain\":false}' | ${CONTAINER_RUNTIME} run -i ${IMAGE_NAME}:${TAG}"
+echo "Build complete: ${IMAGE_NAME}:${TAG}"
+
+# Offer to stop and remove existing nanoclaw containers so they pick up the new image
+CONTAINERS=$(${CONTAINER_RUNTIME} ps -a --filter "name=nanoclaw-" --format "{{.Names}}" 2>/dev/null)
+if [ -n "$CONTAINERS" ]; then
+  echo ""
+  echo "Existing containers:"
+  echo "$CONTAINERS" | sed 's/^/  /'
+  echo ""
+  read -r -p "Stop and remove these containers? [y/N] " answer
+  if [[ "$answer" =~ ^[Yy]$ ]]; then
+    echo "$CONTAINERS" | xargs ${CONTAINER_RUNTIME} stop 2>/dev/null || true
+    echo "$CONTAINERS" | xargs ${CONTAINER_RUNTIME} rm
+    echo "Containers removed."
+  fi
+fi
