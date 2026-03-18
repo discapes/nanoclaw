@@ -115,7 +115,7 @@ export class TelegramChannel implements Channel {
 
     // Command to check bot status
     this.bot.command('ping', (ctx) => {
-      ctx.reply(`${ASSISTANT_NAME} is online.`);
+      ctx.reply('Online.');
     });
 
     // Telegram bot commands handled above — skip them in the general handler

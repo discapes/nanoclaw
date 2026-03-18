@@ -1067,7 +1067,7 @@ describe('TelegramChannel', () => {
 
       await handler(ctx);
 
-      expect(ctx.reply).toHaveBeenCalledWith('UnitTestNameBob is online.');
+      expect(ctx.reply).toHaveBeenCalledWith('Online.');
     });
   });
 
