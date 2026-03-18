@@ -155,7 +155,9 @@ function buildVolumeMounts(
       const srcDir = path.join(skillsSrc, skillDir);
       if (!fs.statSync(srcDir).isDirectory()) continue;
       const dstDir = path.join(skillsDst, skillDir);
-      fs.cpSync(srcDir, dstDir, { recursive: true });
+      if (!fs.existsSync(dstDir)) {
+        fs.cpSync(srcDir, dstDir, { recursive: true });
+      }
     }
   }
   // Persistent /home/node per group (must come before .claude mount)
