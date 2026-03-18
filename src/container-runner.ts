@@ -158,6 +158,15 @@ function buildVolumeMounts(
       fs.cpSync(srcDir, dstDir, { recursive: true });
     }
   }
+  // Persistent /home/node per group (must come before .claude mount)
+  const homeDir = path.join(DATA_DIR, 'sessions', group.folder, 'home');
+  fs.mkdirSync(homeDir, { recursive: true });
+  mounts.push({
+    hostPath: homeDir,
+    containerPath: '/home/node',
+    readonly: false,
+  });
+
   mounts.push({
     hostPath: groupSessionsDir,
     containerPath: '/home/node/.claude',
@@ -187,6 +196,20 @@ function buildVolumeMounts(
     hostPath: agentRunnerSrc,
     containerPath: '/app/src',
     readonly: true,
+  });
+
+  // Persistent /usr/local per group
+  const usrLocalDir = path.join(
+    DATA_DIR,
+    'sessions',
+    group.folder,
+    'usr_local',
+  );
+  fs.mkdirSync(usrLocalDir, { recursive: true });
+  mounts.push({
+    hostPath: usrLocalDir,
+    containerPath: '/usr/local',
+    readonly: false,
   });
 
   // Additional mounts validated against external allowlist (tamper-proof from containers)
