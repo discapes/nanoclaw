@@ -24,6 +24,34 @@ vi.mock('../logger.ts', () => ({
   },
 }));
 
+// Mock transcribe
+const mockTranscribe = vi.fn();
+vi.mock('../transcribe.ts', () => ({
+  transcribe: (...args: any[]) => mockTranscribe(...args),
+}));
+
+// Mock https.get for voice file downloads
+import { PassThrough } from 'stream';
+vi.mock('https', async () => {
+  const actual = await vi.importActual<typeof import('https')>('https');
+  return {
+    ...actual,
+    default: {
+      ...actual,
+      get: (url: string, cb: (res: any) => void) => {
+        const stream = new PassThrough() as PassThrough & {
+          statusCode: number;
+        };
+        stream.statusCode = 200;
+        cb(stream);
+        stream.end(Buffer.from('fake-ogg-data'));
+        return { on: () => ({}) };
+      },
+      globalAgent: actual.globalAgent,
+    },
+  };
+});
+
 // --- Grammy mock ---
 
 type Handler = (...args: any[]) => any;
@@ -596,17 +624,41 @@ describe('TelegramChannel', () => {
       );
     });
 
-    it('stores voice message with placeholder', async () => {
+    it('transcribes voice message via Groq', async () => {
       const opts = createTestOpts();
       const channel = new TelegramChannel('test-token', opts);
       await channel.connect();
 
-      const ctx = createMediaCtx({});
+      mockTranscribe.mockResolvedValueOnce('hello world');
+      const ctx = createMediaCtx({}) as any;
+      ctx.getFile = vi.fn().mockResolvedValue({ file_path: 'voice/file.ogg' });
       await triggerMediaMessage('message:voice', ctx);
 
       expect(opts.onMessage).toHaveBeenCalledWith(
         'tg:100200300',
-        expect.objectContaining({ content: '[Voice message]' }),
+        expect.objectContaining({ content: '[Voice: hello world]' }),
+      );
+    });
+
+    it('falls back with error on transcription failure', async () => {
+      const opts = createTestOpts();
+      const channel = new TelegramChannel('test-token', opts);
+      await channel.connect();
+
+      mockTranscribe.mockRejectedValueOnce(
+        new Error('GROQ_API_KEY not configured'),
+      );
+      const ctx = createMediaCtx({}) as any;
+      ctx.getFile = vi.fn().mockResolvedValue({ file_path: 'voice/file.ogg' });
+      await triggerMediaMessage('message:voice', ctx);
+
+      expect(opts.onMessage).toHaveBeenCalledWith(
+        'tg:100200300',
+        expect.objectContaining({
+          content: expect.stringContaining(
+            '[Voice message — transcription failed:',
+          ),
+        }),
       );
     });
 

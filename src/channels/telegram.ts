@@ -1,9 +1,13 @@
+import fs from 'fs';
 import https from 'https';
+import os from 'os';
+import path from 'path';
 import { Api, Bot } from 'grammy';
 
 import { ASSISTANT_NAME, TRIGGER_PATTERN } from '../config.ts';
 import { readEnvFile } from '../env.ts';
 import { logger } from '../logger.ts';
+import { transcribe } from '../transcribe.ts';
 import { registerChannel, type ChannelOpts } from './registry.ts';
 import type {
   Channel,
@@ -39,6 +43,26 @@ async function sendTelegramMessage(
     logger.debug({ err }, 'Markdown send failed, falling back to plain text');
     await api.sendMessage(chatId, text, options);
   }
+}
+
+function downloadToFile(url: string, dest: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const out = fs.createWriteStream(dest);
+    https
+      .get(url, (res) => {
+        if (res.statusCode !== 200) {
+          out.close();
+          reject(new Error(`Download failed: HTTP ${res.statusCode}`));
+          return;
+        }
+        res.pipe(out);
+        out.on('finish', () => {
+          out.close();
+          resolve();
+        });
+      })
+      .on('error', reject);
+  });
 }
 
 export class TelegramChannel implements Channel {
@@ -201,7 +225,54 @@ export class TelegramChannel implements Channel {
 
     this.bot.on('message:photo', (ctx) => storeNonText(ctx, '[Photo]'));
     this.bot.on('message:video', (ctx) => storeNonText(ctx, '[Video]'));
-    this.bot.on('message:voice', (ctx) => storeNonText(ctx, '[Voice message]'));
+    this.bot.on('message:voice', async (ctx) => {
+      const chatJid = `tg:${ctx.chat.id}`;
+      const group = this.opts.registeredGroups()[chatJid];
+      if (!group) return;
+
+      let content: string;
+      try {
+        const file = await ctx.getFile();
+        const url = `https://api.telegram.org/file/bot${this.botToken}/${file.file_path}`;
+        const tmpFile = path.join(os.tmpdir(), `tg-voice-${Date.now()}.ogg`);
+        try {
+          await downloadToFile(url, tmpFile);
+          const text = await transcribe(tmpFile);
+          content = `[Voice: ${text}]`;
+        } finally {
+          fs.unlink(tmpFile, () => {});
+        }
+      } catch (err: any) {
+        logger.error({ err }, 'Voice transcription failed');
+        content = `[Voice message — transcription failed: ${err.message}]`;
+      }
+
+      const caption = ctx.message.caption ? ` ${ctx.message.caption}` : '';
+      const timestamp = new Date(ctx.message.date * 1000).toISOString();
+      const senderName =
+        ctx.from?.first_name ||
+        ctx.from?.username ||
+        ctx.from?.id?.toString() ||
+        'Unknown';
+      const isGroup =
+        ctx.chat.type === 'group' || ctx.chat.type === 'supergroup';
+      this.opts.onChatMetadata(
+        chatJid,
+        timestamp,
+        undefined,
+        'telegram',
+        isGroup,
+      );
+      this.opts.onMessage(chatJid, {
+        id: ctx.message.message_id.toString(),
+        chat_jid: chatJid,
+        sender: ctx.from?.id?.toString() || '',
+        sender_name: senderName,
+        content: `${content}${caption}`,
+        timestamp,
+        is_from_me: false,
+      });
+    });
     this.bot.on('message:audio', (ctx) => storeNonText(ctx, '[Audio]'));
     this.bot.on('message:document', (ctx) => {
       const name = ctx.message.document?.file_name || 'file';
