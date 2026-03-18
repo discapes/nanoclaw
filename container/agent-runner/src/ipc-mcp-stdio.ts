@@ -69,12 +69,12 @@ server.tool(
 
 server.tool(
   'send_file',
-  'Send a file (image, document, etc.) to the user or group. The file must exist in the container filesystem.',
+  'Send a file (image, document, etc.) to the user or group. The file must be under /workspace/group/ (recommended: /workspace/group/outbox/).',
   {
     filePath: z
       .string()
       .describe(
-        'Absolute path to the file inside the container (e.g., /workspace/group/outbox/chart.png)',
+        'Absolute path under /workspace/group/ (e.g., /workspace/group/outbox/chart.png)',
       ),
     caption: z
       .string()
@@ -82,6 +82,17 @@ server.tool(
       .describe('Optional caption to send with the file'),
   },
   async (args) => {
+    if (!args.filePath.startsWith('/workspace/group/')) {
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: `File must be under /workspace/group/. Move it to /workspace/group/outbox/ first.`,
+          },
+        ],
+        isError: true,
+      };
+    }
     if (!fs.existsSync(args.filePath)) {
       return {
         content: [
