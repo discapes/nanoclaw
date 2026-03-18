@@ -607,6 +607,15 @@ async function runQuery(
 }
 
 async function main(): Promise<void> {
+  // Copy default dotfiles into /home/node if missing (host mount may be empty)
+  for (const f of ['.bashrc', '.profile', '.bash_logout']) {
+    const target = path.join('/home/node', f);
+    const source = path.join('/etc/skel', f);
+    if (!fs.existsSync(target) && fs.existsSync(source)) {
+      fs.copyFileSync(source, target);
+    }
+  }
+
   let containerInput: ContainerInput;
 
   try {
