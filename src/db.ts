@@ -1,6 +1,7 @@
 import Database from 'better-sqlite3';
 import fs from 'fs';
 import path from 'path';
+import { randomUUID } from 'crypto';
 
 import { DATA_DIR, STORE_DIR } from './config.ts';
 import { isValidGroupFolder } from './group-folder.ts';
@@ -111,6 +112,21 @@ function createSchema(database: Database.Database): void {
     database.exec(
       `UPDATE registered_groups SET is_main = 1 WHERE folder = 'main'`,
     );
+  } catch {
+    /* column already exists */
+  }
+
+  // Add token column if it doesn't exist (migration for existing DBs)
+  try {
+    database.exec(`ALTER TABLE registered_groups ADD COLUMN token TEXT`);
+    // Backfill existing rows with a stable random token
+    const rows = database
+      .prepare('SELECT jid FROM registered_groups WHERE token IS NULL')
+      .all() as Array<{ jid: string }>;
+    const update = database.prepare(
+      'UPDATE registered_groups SET token = ? WHERE jid = ?',
+    );
+    for (const row of rows) update.run(randomUUID(), row.jid);
   } catch {
     /* column already exists */
   }
@@ -537,6 +553,7 @@ export function getRegisteredGroup(
         folder: string;
         trigger_pattern: string;
         added_at: string;
+        token: string;
         container_config: string | null;
         requires_trigger: number | null;
         is_main: number | null;
@@ -556,6 +573,7 @@ export function getRegisteredGroup(
     folder: row.folder,
     trigger: row.trigger_pattern,
     added_at: row.added_at,
+    token: row.token,
     containerConfig: row.container_config
       ? JSON.parse(row.container_config)
       : undefined,
@@ -569,9 +587,10 @@ export function setRegisteredGroup(jid: string, group: RegisteredGroup): void {
   if (!isValidGroupFolder(group.folder)) {
     throw new Error(`Invalid group folder "${group.folder}" for JID ${jid}`);
   }
+  const token = group.token || randomUUID();
   db.prepare(
-    `INSERT OR REPLACE INTO registered_groups (jid, name, folder, trigger_pattern, added_at, container_config, requires_trigger, is_main)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT OR REPLACE INTO registered_groups (jid, name, folder, trigger_pattern, added_at, container_config, requires_trigger, is_main, token)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     jid,
     group.name,
@@ -581,6 +600,7 @@ export function setRegisteredGroup(jid: string, group: RegisteredGroup): void {
     group.containerConfig ? JSON.stringify(group.containerConfig) : null,
     group.requiresTrigger === undefined ? 1 : group.requiresTrigger ? 1 : 0,
     group.isMain ? 1 : 0,
+    token,
   );
 }
 
@@ -591,6 +611,7 @@ export function getAllRegisteredGroups(): Record<string, RegisteredGroup> {
     folder: string;
     trigger_pattern: string;
     added_at: string;
+    token: string;
     container_config: string | null;
     requires_trigger: number | null;
     is_main: number | null;
@@ -609,6 +630,7 @@ export function getAllRegisteredGroups(): Record<string, RegisteredGroup> {
       folder: row.folder,
       trigger: row.trigger_pattern,
       added_at: row.added_at,
+      token: row.token,
       containerConfig: row.container_config
         ? JSON.parse(row.container_config)
         : undefined,

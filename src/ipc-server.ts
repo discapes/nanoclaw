@@ -45,20 +45,14 @@ interface ContainerIdentity {
 }
 
 const tokenRegistry = new Map<string, ContainerIdentity>();
-// Stable per-group tokens — generated once, reused across container restarts
-const groupTokens = new Map<string, string>();
 
-export function getGroupToken(
+export function registerGroupToken(
+  token: string,
   groupFolder: string,
   chatJid: string,
   isMain: boolean,
-): string {
-  const existing = groupTokens.get(groupFolder);
-  if (existing) return existing;
-  const token = randomUUID();
-  groupTokens.set(groupFolder, token);
+): void {
   tokenRegistry.set(token, { groupFolder, chatJid, isMain });
-  return token;
 }
 
 function ok(text: string) {

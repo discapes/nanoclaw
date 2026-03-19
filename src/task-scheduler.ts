@@ -8,7 +8,6 @@ import {
   TIMEZONE,
 } from './config.ts';
 import { type ContainerOutput, runContainerAgent } from './container-runner.ts';
-import { getGroupToken } from './ipc-server.ts';
 import {
   getDueTasks,
   getTaskById,
@@ -152,7 +151,7 @@ async function runTask(
     }, TASK_CLOSE_DELAY_MS);
   };
 
-  const ipcToken = getGroupToken(task.group_folder, task.chat_jid, isMain);
+  const ipcToken = group.token;
   try {
     const output = await runContainerAgent(
       group,

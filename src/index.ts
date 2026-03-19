@@ -1,5 +1,6 @@
 import fs from 'fs';
 import path from 'path';
+import { randomUUID } from 'crypto';
 
 import {
   ASSISTANT_NAME,
@@ -45,7 +46,7 @@ import {
 import { GroupQueue } from './group-queue.ts';
 import { resolveGroupFolderPath } from './group-folder.ts';
 import {
-  getGroupToken,
+  registerGroupToken,
   startIpcMcpServer,
   type IpcDeps,
 } from './ipc-server.ts';
@@ -93,6 +94,10 @@ function loadState(): void {
   }
   sessions = getAllSessions();
   registeredGroups = getAllRegisteredGroups();
+  for (const [jid, group] of Object.entries(registeredGroups)) {
+    if (group.token)
+      registerGroupToken(group.token, group.folder, jid, !!group.isMain);
+  }
   logger.info(
     { groupCount: Object.keys(registeredGroups).length },
     'State loaded',
@@ -116,8 +121,11 @@ function registerGroup(jid: string, group: RegisteredGroup): void {
     return;
   }
 
-  registeredGroups[jid] = group;
-  setRegisteredGroup(jid, group);
+  const token = group.token || randomUUID();
+  const groupWithToken = { ...group, token };
+  registeredGroups[jid] = groupWithToken;
+  setRegisteredGroup(jid, groupWithToken);
+  registerGroupToken(token, group.folder, jid, !!group.isMain);
 
   // Create group folder
   fs.mkdirSync(path.join(groupDir, 'logs'), { recursive: true });
@@ -336,7 +344,7 @@ async function runAgent(
       }
     : undefined;
 
-  const ipcToken = getGroupToken(group.folder, chatJid, isMain);
+  const ipcToken = group.token;
   try {
     const output = await runContainerAgent(
       group,
