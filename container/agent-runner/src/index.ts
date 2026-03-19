@@ -186,7 +186,10 @@ function formatMessage(message: any): { label: string; text: string } {
     const tools = message.tools?.length ?? 0;
     const skills = message.skills?.length ?? 0;
     const mcps = message.mcp_servers
-      ?.map((s: any) => `${s.name}(${s.status})`)
+      ?.map(
+        (s: any) =>
+          `${s.name}(${s.status == 'connected' ? s.status : JSON.stringify(s)})`,
+      )
       .join(', ');
     return {
       label: 'init',
