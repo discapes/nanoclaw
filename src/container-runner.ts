@@ -391,8 +391,8 @@ export async function runContainerAgent(
 
           try {
             const parsed: ContainerOutput = JSON.parse(jsonStr);
-            if (parsed.newSessionId) {
-              newSessionId = parsed.newSessionId;
+            if (parsed.newSessionId !== undefined) {
+              newSessionId = parsed.newSessionId || undefined;
             }
             hadStreamingOutput = true;
             // Activity detected — reset the hard timeout

@@ -14,7 +14,7 @@
  *   Final marker after loop ends signals completion.
  */
 
-const RUNNER_VERSION = '1.6.2';
+const RUNNER_VERSION = '1.6.8';
 
 import fs from 'fs';
 import path from 'path';
@@ -22,9 +22,23 @@ import {
   query,
   createSdkMcpServer,
   tool,
-  type HookCallback,
-  type PreCompactHookInput,
 } from '@anthropic-ai/claude-agent-sdk';
+import { createPreCompactHook } from './archive.ts';
+import {
+  MessageStream,
+  IPC_INPUT_DIR,
+  IPC_INPUT_CLOSE_SENTINEL,
+  IPC_POLL_MS,
+  shouldClose,
+  drainIpcInput,
+  waitForIpcMessage,
+} from './ipc.ts';
+import {
+  truncateMiddle,
+  extractUserMessages,
+  formatMessage,
+  formatValue,
+} from './format.ts';
 
 interface ContainerInput {
   prompt: string;
@@ -43,65 +57,32 @@ interface ContainerOutput {
   error?: string;
 }
 
-interface SessionEntry {
-  sessionId: string;
-  fullPath: string;
-  summary: string;
-  firstPrompt: string;
+const OUTPUT_START_MARKER = '---NANOCLAW_OUTPUT_START---';
+const OUTPUT_END_MARKER = '---NANOCLAW_OUTPUT_END---';
+
+function writeOutput(output: ContainerOutput): void {
+  console.log(OUTPUT_START_MARKER);
+  console.log(JSON.stringify(output));
+  console.log(OUTPUT_END_MARKER);
 }
 
-interface SessionsIndex {
-  entries: SessionEntry[];
+function log(message: string): void {
+  console.error(message);
 }
 
-interface SDKUserMessage {
-  type: 'user';
-  message: { role: 'user'; content: string };
-  parent_tool_use_id: null;
-  session_id: string;
-}
-
-const IPC_INPUT_DIR = '/workspace/ipc/input';
-const IPC_INPUT_CLOSE_SENTINEL = path.join(IPC_INPUT_DIR, '_close');
-const IPC_INPUT_RESET_SENTINEL = path.join(IPC_INPUT_DIR, '_reset');
-const IPC_POLL_MS = 500;
-
-/**
- * Push-based async iterable for streaming user messages to the SDK.
- * Keeps the iterable alive until end() is called, preventing isSingleUserTurn.
- */
-class MessageStream {
-  private queue: SDKUserMessage[] = [];
-  private waiting: (() => void) | null = null;
-  private done = false;
-
-  push(text: string): void {
-    this.queue.push({
-      type: 'user',
-      message: { role: 'user', content: text },
-      parent_tool_use_id: null,
-      session_id: '',
-    });
-    this.waiting?.();
+function writeSummary(text: string, archivePath: string): void {
+  let content = text.split('\n').slice(1).join('\n');
+  const marker = 'If you need specific details from before compaction';
+  const idx = content.indexOf(marker);
+  if (idx !== -1) {
+    content =
+      content.slice(0, idx) +
+      marker +
+      ` the full conversation is at ${archivePath}`;
   }
-
-  end(): void {
-    this.done = true;
-    this.waiting?.();
-  }
-
-  async *[Symbol.asyncIterator](): AsyncGenerator<SDKUserMessage> {
-    while (true) {
-      while (this.queue.length > 0) {
-        yield this.queue.shift()!;
-      }
-      if (this.done) return;
-      await new Promise<void>((r) => {
-        this.waiting = r;
-      });
-      this.waiting = null;
-    }
-  }
+  const summaryPath = archivePath.replace(/\.md$/, '.summary.md');
+  fs.writeFileSync(summaryPath, content);
+  log(`Archived summary to ${summaryPath}`);
 }
 
 async function readStdin(): Promise<string> {
@@ -116,389 +97,25 @@ async function readStdin(): Promise<string> {
   });
 }
 
-const OUTPUT_START_MARKER = '---NANOCLAW_OUTPUT_START---';
-const OUTPUT_END_MARKER = '---NANOCLAW_OUTPUT_END---';
-
-function writeOutput(output: ContainerOutput): void {
-  console.log(OUTPUT_START_MARKER);
-  console.log(JSON.stringify(output));
-  console.log(OUTPUT_END_MARKER);
-}
-
-function log(message: string): void {
-  console.error(message);
-}
-
-function collapse(s: string): string {
-  return s.trim().replace(/\s*\n\s*/g, '  ↵ ');
-}
-
-function extractUserMessages(s: string): string | null {
-  const matches = [
-    ...s.matchAll(/<message sender="([^"]*)"[^>]*>([\s\S]*?)<\/message>/g),
-  ];
-  if (matches.length === 0) return null;
-  return matches
-    .map((m) => (matches.length > 1 ? `${m[1]}: ${m[2]}` : m[2]))
-    .join(' | ');
-}
-
-function truncateMiddle(s: string, max = 5000): string {
-  s = collapse(s);
-  if (s.length <= max) return s;
-  const half = Math.floor((max - 5) / 2);
-  return s.slice(0, half) + ' ... ' + s.slice(-half);
-}
-
-function formatValue(val: any, max = 5000): string {
-  if (typeof val === 'string') return truncateMiddle(val, max);
-  if (Array.isArray(val)) {
-    if (val.length === 1) return formatValue(val[0], max);
-    return '[ ' + val.map((v) => formatValue(v, max)).join(' | ') + ' ]';
-  }
-  if (val?.type === 'image') return '<image>';
-  if (val?.type === 'text' && val.text) return truncateMiddle(val.text, max);
-  if (val?.type === 'thinking')
-    return `«${truncateMiddle(val.thinking || 'redacted', max)}»`;
-  if (val?.type === 'tool_use' || val?.type === 'server_tool_use')
-    return `${val.name}(${formatFields(val.input || {})})`;
-  if (val?.type === 'tool_result') {
-    const wrapper = val.is_error ? 'Error' : 'Result';
-    return `${wrapper}(${formatValue(val.content, max)})`;
-  }
-  return formatFields(val, max);
-}
-
-function formatFields(obj: Record<string, any>, max = 200): string {
-  return Object.entries(obj)
-    .map(
-      ([k, v]) =>
-        `${k}=${truncateMiddle(typeof v === 'string' ? v : JSON.stringify(v), max)}`,
-    )
-    .join(', ');
-}
-
-// See docs/sdk-message-types.md for the full schema of each message type.
-function formatMessage(message: any): { label: string; text: string } {
-  const type = message.type;
-
-  if (type === 'system' && message.subtype === 'init') {
-    const tools = message.tools?.length ?? 0;
-    const skills = message.skills?.length ?? 0;
-    const mcps = message.mcp_servers
-      ?.map(
-        (s: any) =>
-          `${s.name}(${s.status == 'connected' ? s.status : JSON.stringify(s)})`,
-      )
-      .join(', ');
-    return {
-      label: 'init',
-      text: `Session: ${message.session_id || 'new'} | model=${message.model} | ${tools} tools, ${skills} skills | MCP: ${mcps || 'none'}`,
-    };
-  }
-
-  if (type === 'system' && message.subtype === 'task_notification') {
-    return {
-      label: 'task',
-      text: `${message.task_id}: ${message.status} — ${message.summary}`,
-    };
-  }
-
-  if (type === 'system') {
-    return { label: `system/${message.subtype}`, text: formatValue(message) };
-  }
-
-  if (type === 'assistant' && message.message?.content) {
-    return { label: 'assistant', text: formatValue(message.message.content) };
-  }
-
-  if (type === 'user' && message.message?.content) {
-    return { label: 'user', text: formatValue(message.message.content) };
-  }
-
-  if (type === 'rate_limit_event') {
-    const r = message.rate_limit_info || {};
-    return {
-      label: 'rate_limit',
-      text: `${r.rateLimitType} ${r.status}${r.resetsAt ? ` | resets ${new Date(r.resetsAt * 1000).toISOString()}` : ''}`,
-    };
-  }
-
-  if (type === 'result') {
-    const u = message.usage || {};
-    const cost = message.total_cost_usd
-      ? `$${message.total_cost_usd.toFixed(4)}`
-      : '';
-    const dur = message.duration_api_ms
-      ? `${(message.duration_api_ms / 1000).toFixed(1)}s`
-      : '';
-    const tokens = [
-      u.input_tokens && `in:${u.input_tokens}`,
-      u.output_tokens && `out:${u.output_tokens}`,
-      u.cache_read_input_tokens && `cache_read:${u.cache_read_input_tokens}`,
-      u.cache_creation_input_tokens &&
-        `cache_write:${u.cache_creation_input_tokens}`,
-    ]
-      .filter(Boolean)
-      .join(' ');
-    return {
-      label: 'result',
-      text: `${message.subtype} | ${message.num_turns} turns | ${dur} | ${cost} | ${tokens}`,
-    };
-  }
-
-  return {
-    label: 'unhandled',
-    text: truncateMiddle(JSON.stringify(message)),
-  };
-}
-
-function getSessionSummary(
-  sessionId: string,
-  transcriptPath: string,
-): string | null {
-  const projectDir = path.dirname(transcriptPath);
-  const indexPath = path.join(projectDir, 'sessions-index.json');
-
-  if (!fs.existsSync(indexPath)) {
-    log(`Sessions index not found at ${indexPath}`);
-    return null;
-  }
-
-  try {
-    const index: SessionsIndex = JSON.parse(
-      fs.readFileSync(indexPath, 'utf-8'),
-    );
-    const entry = index.entries.find((e) => e.sessionId === sessionId);
-    if (entry?.summary) {
-      return entry.summary;
-    }
-  } catch (err) {
-    log(
-      `Failed to read sessions index: ${err instanceof Error ? err.message : String(err)}`,
-    );
-  }
-
-  return null;
-}
-
-function findTranscriptPath(sessionId: string): string | null {
-  const base = path.join(process.env.HOME || '/root', '.claude', 'projects');
-  if (!fs.existsSync(base)) return null;
-  for (const project of fs.readdirSync(base)) {
-    const candidate = path.join(base, project, `${sessionId}.jsonl`);
-    if (fs.existsSync(candidate)) return candidate;
-  }
-  return null;
-}
-
-function archiveSession(sessionId: string, transcriptPath: string): void {
-  const content = fs.readFileSync(transcriptPath, 'utf-8');
-  const messages = parseTranscript(content);
-
-  if (messages.length === 0) {
-    log('No messages to archive');
-    return;
-  }
-
-  const summary = getSessionSummary(sessionId, transcriptPath);
-  const name = summary ? sanitizeFilename(summary) : generateFallbackName();
-
-  const conversationsDir = '/workspace/group/conversations';
-  fs.mkdirSync(conversationsDir, { recursive: true });
-
-  const date = new Date().toISOString().split('T')[0];
-  const filename = `${date}-${name}.md`;
-  const filePath = path.join(conversationsDir, filename);
-
-  const markdown = formatTranscriptMarkdown(messages, summary);
-  fs.writeFileSync(filePath, markdown);
-
-  log(`Archived conversation to ${filePath}`);
-}
-
-/**
- * Archive the full transcript to conversations/ before compaction.
- */
-function createPreCompactHook(): HookCallback {
-  return async (input, _toolUseId, _context) => {
-    const preCompact = input as PreCompactHookInput;
-    const transcriptPath = preCompact.transcript_path;
-    const sessionId = preCompact.session_id;
-
-    if (!transcriptPath || !fs.existsSync(transcriptPath)) {
-      log('No transcript found for archiving');
-      return {};
-    }
-
-    try {
-      archiveSession(sessionId, transcriptPath);
-    } catch (err) {
-      log(
-        `Failed to archive transcript: ${err instanceof Error ? err.message : String(err)}`,
-      );
-    }
-
-    return {};
-  };
-}
-
-function sanitizeFilename(summary: string): string {
-  return summary
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-    .slice(0, 50);
-}
-
-function generateFallbackName(): string {
-  const time = new Date();
-  return `conversation-${time.getHours().toString().padStart(2, '0')}${time.getMinutes().toString().padStart(2, '0')}`;
-}
-
-interface ParsedMessage {
-  role: 'user' | 'assistant';
-  content: string;
-}
-
-function parseTranscript(content: string): ParsedMessage[] {
-  const messages: ParsedMessage[] = [];
-
-  for (const line of content.split('\n')) {
-    if (!line.trim()) continue;
-    try {
-      const entry = JSON.parse(line);
-      if (entry.type === 'user' && entry.message?.content) {
-        const text =
-          typeof entry.message.content === 'string'
-            ? entry.message.content
-            : entry.message.content
-                .map((c: { text?: string }) => c.text || '')
-                .join('');
-        if (text) messages.push({ role: 'user', content: text });
-      } else if (entry.type === 'assistant' && entry.message?.content) {
-        const textParts = entry.message.content
-          .filter((c: { type: string }) => c.type === 'text')
-          .map((c: { text: string }) => c.text);
-        const text = textParts.join('');
-        if (text) messages.push({ role: 'assistant', content: text });
-      }
-    } catch {}
-  }
-
-  return messages;
-}
-
-function formatTranscriptMarkdown(
-  messages: ParsedMessage[],
-  title?: string | null,
-): string {
-  const now = new Date();
-  const formatDateTime = (d: Date) =>
-    d.toLocaleString('en-US', {
-      month: 'short',
-      day: 'numeric',
-      hour: 'numeric',
-      minute: '2-digit',
-      hour12: true,
-    });
-
-  const lines: string[] = [];
-  lines.push(`# ${title || 'Conversation'}`);
-  lines.push('');
-  lines.push(`Archived: ${formatDateTime(now)}`);
-  lines.push('');
-  lines.push('---');
-  lines.push('');
-
-  for (const msg of messages) {
-    const sender = msg.role === 'user' ? 'User' : 'Assistant';
-    const content =
-      msg.content.length > 2000
-        ? msg.content.slice(0, 2000) + '...'
-        : msg.content;
-    lines.push(`**${sender}**: ${content}`);
-    lines.push('');
-  }
-
-  return lines.join('\n');
-}
-
-/**
- * Check for _close sentinel.
- */
-function shouldClose(): boolean {
-  if (fs.existsSync(IPC_INPUT_CLOSE_SENTINEL)) {
-    try {
-      fs.unlinkSync(IPC_INPUT_CLOSE_SENTINEL);
-    } catch {
-      /* ignore */
-    }
-    return true;
-  }
-  return false;
-}
-
-/**
- * Drain all pending IPC input messages.
- * Returns messages found, or empty array.
- */
-function drainIpcInput(): string[] {
-  try {
-    fs.mkdirSync(IPC_INPUT_DIR, { recursive: true });
-    const files = fs
-      .readdirSync(IPC_INPUT_DIR)
-      .filter((f) => f.endsWith('.json'))
-      .sort();
-
-    const messages: string[] = [];
-    for (const file of files) {
-      const filePath = path.join(IPC_INPUT_DIR, file);
-      try {
-        const data = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
-        fs.unlinkSync(filePath);
-        if (data.type === 'message' && data.text) {
-          messages.push(data.text);
-        }
-      } catch (err) {
-        log(
-          `Failed to process input file ${file}: ${err instanceof Error ? err.message : String(err)}`,
-        );
-        try {
-          fs.unlinkSync(filePath);
-        } catch {
-          /* ignore */
-        }
-      }
-    }
-    return messages;
-  } catch (err) {
-    log(`IPC drain error: ${err instanceof Error ? err.message : String(err)}`);
-    return [];
-  }
-}
-
-/**
- * Wait for a new IPC message or _close sentinel.
- * Returns the messages as a single string, or null if _close.
- */
-function waitForIpcMessage(): Promise<string | null> {
-  return new Promise((resolve) => {
-    const poll = () => {
-      if (shouldClose()) {
-        resolve(null);
-        return;
-      }
-      const messages = drainIpcInput();
-      if (messages.length > 0) {
-        resolve(messages.join('\n'));
-        return;
-      }
-      setTimeout(poll, IPC_POLL_MS);
-    };
-    poll();
-  });
-}
+const TOOL_EMOJI: Record<string, string> = {
+  Bash: '⚡',
+  Read: '👁',
+  Write: '✍️',
+  Edit: '✏️',
+  Glob: '📂',
+  Grep: '🔎',
+  WebSearch: '🔍',
+  WebFetch: '🌐',
+  mcp__nanoclaw__schedule_task: '\\[⏰📅\\]',
+  mcp__nanoclaw__list_tasks: '\\[⏰📋\\]',
+  mcp__nanoclaw__pause_task: '\\[⏰⏸\\]',
+  mcp__nanoclaw__resume_task: '\\[⏰▶\\]',
+  mcp__nanoclaw__cancel_task: '\\[⏰❌\\]',
+  mcp__nanoclaw__update_task: '\\[⏰✏️\\]',
+  'mcp__agent-control__stop_container': '🛑',
+  'mcp__agent-control__reset_session': '🔄',
+  Skill: '🧩',
+};
 
 /**
  * Run a single query and stream results via writeOutput.
@@ -513,6 +130,7 @@ async function runQuery(
   sdkEnv: Record<string, string | undefined>,
   controlServer: ReturnType<typeof createSdkMcpServer>,
   resumeAt?: string,
+  registerStreamEnder?: (fn: () => void) => void,
 ): Promise<{
   newSessionId?: string;
   lastAssistantUuid?: string;
@@ -524,6 +142,7 @@ async function runQuery(
   let resultCount = 0;
 
   const stream = new MessageStream();
+  registerStreamEnder?.(() => stream.end());
   const logUser = (text: string) => {
     messageCount++;
     log(
@@ -542,17 +161,6 @@ async function runQuery(
     if (shouldClose()) {
       log('Close sentinel detected during query, ending stream');
       closedDuringQuery = true;
-      stream.end();
-      ipcPolling = false;
-      return;
-    }
-    if (fs.existsSync(IPC_INPUT_RESET_SENTINEL)) {
-      try {
-        fs.unlinkSync(IPC_INPUT_RESET_SENTINEL);
-      } catch {
-        /* ignore */
-      }
-      log('Reset sentinel detected during query, ending stream');
       stream.end();
       ipcPolling = false;
       return;
@@ -589,25 +197,6 @@ async function runQuery(
     log(`Additional directories: ${extraDirs.join(', ')}`);
   }
 
-  const TOOL_EMOJI: Record<string, string> = {
-    Bash: '⚡',
-    Read: '👁',
-    Write: '✍️',
-    Edit: '✏️',
-    Glob: '📂',
-    Grep: '🔎',
-    WebSearch: '🔍',
-    WebFetch: '🌐',
-    mcp__nanoclaw__schedule_task: '\\[⏰📅\\]',
-    mcp__nanoclaw__list_tasks: '\\[⏰📋\\]',
-    mcp__nanoclaw__pause_task: '\\[⏰⏸\\]',
-    mcp__nanoclaw__resume_task: '\\[⏰▶\\]',
-    mcp__nanoclaw__cancel_task: '\\[⏰❌\\]',
-    mcp__nanoclaw__update_task: '\\[⏰✏️\\]',
-    'mcp__agent-control__stop_container': '🛑',
-    'mcp__agent-control__reset_session': '🔄',
-    Skill: '🧩',
-  };
   // Output buffering: we want to append a ✓ to the final assistant message so
   // the user knows the agent is done. But the SDK doesn't mark assistant messages
   // as final — we only know when the result message arrives afterward. So we
@@ -624,6 +213,8 @@ async function runQuery(
   let pendingOutput: ContainerOutput | null = null;
   let pendingTimer: ReturnType<typeof setTimeout> | null = null;
   let hadVisibleOutput = false;
+  let lastArchivePath: string | null = null;
+  let awaitingSummary = false;
   const flushPending = (append?: string) => {
     if (pendingTimer) {
       clearTimeout(pendingTimer);
@@ -695,7 +286,15 @@ async function runQuery(
         'agent-control': controlServer,
       },
       hooks: {
-        PreCompact: [{ hooks: [createPreCompactHook()] }],
+        PreCompact: [
+          {
+            hooks: [
+              createPreCompactHook((p) => {
+                lastArchivePath = p;
+              }),
+            ],
+          },
+        ],
       },
     },
   })) {
@@ -749,6 +348,28 @@ async function runQuery(
       newSessionId = message.session_id;
     }
 
+    if (message.type === 'system' && message.subtype === 'compact_boundary') {
+      awaitingSummary = true;
+    }
+
+    if (
+      awaitingSummary &&
+      message.type === 'user' &&
+      (message as any).message?.content
+    ) {
+      const text = formatValue((message as any).message.content, Infinity);
+      if (text && lastArchivePath) {
+        try {
+          writeSummary(text, lastArchivePath);
+        } catch (err) {
+          log(
+            `Failed to archive summary: ${err instanceof Error ? err.message : String(err)}`,
+          );
+        }
+      }
+      awaitingSummary = false;
+    }
+
     if (message.type === 'result') {
       resultCount++;
       writeOutput({
@@ -765,6 +386,178 @@ async function runQuery(
     `Query done. Messages: ${messageCount}, results: ${resultCount}, lastAssistantUuid: ${lastAssistantUuid || 'none'}, closedDuringQuery: ${closedDuringQuery}`,
   );
   return { newSessionId, lastAssistantUuid, closedDuringQuery };
+}
+
+function createControlServer(
+  onReset: () => void,
+): ReturnType<typeof createSdkMcpServer> {
+  return createSdkMcpServer({
+    name: 'agent-control',
+    tools: [
+      tool(
+        'reset_session',
+        'Start a fresh conversation session. The next message will begin a new session with no prior history.',
+        {},
+        async () => {
+          onReset();
+          return {
+            content: [
+              {
+                type: 'text' as const,
+                text: 'Session will reset after this turn.',
+              },
+            ],
+          };
+        },
+      ),
+      tool(
+        'stop_container',
+        'Shut down this container gracefully. Use when the user wants to reload or restart.',
+        {},
+        async () => {
+          fs.writeFileSync(IPC_INPUT_CLOSE_SENTINEL, '');
+          return {
+            content: [
+              { type: 'text' as const, text: 'Container shutting down.' },
+            ],
+          };
+        },
+      ),
+    ],
+  });
+}
+
+async function handleSlashCommand(
+  prompt: string,
+  sessionId: string | undefined,
+  sdkEnv: Record<string, string | undefined>,
+): Promise<void> {
+  log(`Handling session command: ${prompt}`);
+  let slashSessionId: string | undefined;
+  let lastArchivePath: string | null = null;
+  let awaitingSummary = false;
+  let compactBoundarySeen = false;
+  let hadError = false;
+  let resultEmitted = false;
+
+  try {
+    for await (const message of query({
+      prompt,
+      options: {
+        cwd: '/workspace/group',
+        resume: sessionId,
+        systemPrompt: undefined,
+        allowedTools: [],
+        env: sdkEnv,
+        permissionMode: 'bypassPermissions' as const,
+        allowDangerouslySkipPermissions: true,
+        settingSources: ['project', 'user'] as const,
+        hooks: {
+          PreCompact: [
+            {
+              hooks: [
+                createPreCompactHook((p) => {
+                  lastArchivePath = p;
+                }),
+              ],
+            },
+          ],
+        },
+      },
+    })) {
+      const msgType =
+        message.type === 'system'
+          ? `system/${(message as { subtype?: string }).subtype}`
+          : message.type;
+      log(`[slash-cmd] type=${msgType}`);
+
+      if (message.type === 'system' && message.subtype === 'init') {
+        slashSessionId = message.session_id;
+        log(`Session after slash command: ${slashSessionId}`);
+      }
+
+      if (
+        message.type === 'system' &&
+        (message as { subtype?: string }).subtype === 'compact_boundary'
+      ) {
+        compactBoundarySeen = true;
+        awaitingSummary = true;
+        log('Compact boundary observed — compaction completed');
+      }
+
+      if (
+        awaitingSummary &&
+        message.type === 'user' &&
+        (message as any).message?.content
+      ) {
+        const text = formatValue((message as any).message.content, Infinity);
+        if (text && lastArchivePath) {
+          try {
+            writeSummary(text, lastArchivePath);
+          } catch (err) {
+            log(
+              `Failed to archive summary: ${err instanceof Error ? err.message : String(err)}`,
+            );
+          }
+        }
+        awaitingSummary = false;
+      }
+
+      if (message.type === 'result') {
+        const resultSubtype = (message as { subtype?: string }).subtype;
+        const textResult =
+          'result' in message ? (message as { result?: string }).result : null;
+
+        if (resultSubtype?.startsWith('error')) {
+          hadError = true;
+          writeOutput({
+            status: 'error',
+            result: null,
+            error: textResult || 'Session command failed.',
+            newSessionId: slashSessionId,
+          });
+        } else {
+          writeOutput({
+            status: 'success',
+            result: textResult || 'Conversation compacted.',
+            newSessionId: slashSessionId,
+          });
+        }
+        resultEmitted = true;
+      }
+    }
+  } catch (err) {
+    hadError = true;
+    const errorMsg = err instanceof Error ? err.message : String(err);
+    log(`Slash command error: ${errorMsg}`);
+    writeOutput({ status: 'error', result: null, error: errorMsg });
+  }
+
+  log(
+    `Slash command done. compactBoundarySeen=${compactBoundarySeen}, hadError=${hadError}`,
+  );
+
+  if (!hadError && !compactBoundarySeen) {
+    log(
+      'WARNING: compact_boundary was not observed. Compaction may not have completed.',
+    );
+  }
+
+  if (!resultEmitted && !hadError) {
+    writeOutput({
+      status: 'success',
+      result: compactBoundarySeen
+        ? 'Conversation compacted.'
+        : 'Compaction requested but compact_boundary was not observed.',
+      newSessionId: slashSessionId,
+    });
+  } else if (!hadError) {
+    writeOutput({
+      status: 'success',
+      result: null,
+      newSessionId: slashSessionId,
+    });
+  }
 }
 
 async function main(): Promise<void> {
@@ -803,66 +596,17 @@ async function main(): Promise<void> {
 
   let sessionId = containerInput.sessionId;
   let resetRequested = false;
+  let endCurrentStream: (() => void) | null = null;
   fs.mkdirSync(IPC_INPUT_DIR, { recursive: true });
 
-  const controlServer = createSdkMcpServer({
-    name: 'agent-control',
-    tools: [
-      tool(
-        'reset_session',
-        'Start a fresh conversation session. The next message will begin a new session with no prior history.',
-        {},
-        async () => {
-          if (sessionId) {
-            const transcriptPath = findTranscriptPath(sessionId);
-            if (transcriptPath) {
-              try {
-                archiveSession(sessionId, transcriptPath);
-              } catch (err) {
-                log(
-                  `Failed to archive on reset: ${err instanceof Error ? err.message : String(err)}`,
-                );
-              }
-            } else {
-              log('No transcript found for archiving on reset');
-            }
-          }
-          resetRequested = true;
-          fs.writeFileSync(IPC_INPUT_RESET_SENTINEL, '');
-          return {
-            content: [
-              {
-                type: 'text' as const,
-                text: 'Session will reset after this turn.',
-              },
-            ],
-          };
-        },
-      ),
-      tool(
-        'stop_container',
-        'Shut down this container gracefully. Use when the user wants to reload or restart.',
-        {},
-        async () => {
-          fs.writeFileSync(IPC_INPUT_CLOSE_SENTINEL, '');
-          return {
-            content: [
-              { type: 'text' as const, text: 'Container shutting down.' },
-            ],
-          };
-        },
-      ),
-    ],
+  const controlServer = createControlServer(() => {
+    resetRequested = true;
+    endCurrentStream?.();
   });
 
-  // Clean up stale sentinels from previous container runs
+  // Clean up stale close sentinel from previous container run
   try {
     fs.unlinkSync(IPC_INPUT_CLOSE_SENTINEL);
-  } catch {
-    /* ignore */
-  }
-  try {
-    fs.unlinkSync(IPC_INPUT_RESET_SENTINEL);
   } catch {
     /* ignore */
   }
@@ -878,120 +622,14 @@ async function main(): Promise<void> {
     prompt += '\n' + pending.join('\n');
   }
 
-  // --- Slash command handling ---
   // Only known session slash commands are handled here. This prevents
   // accidental interception of user prompts that happen to start with '/'.
   const KNOWN_SESSION_COMMANDS = new Set(['/compact']);
   const trimmedPrompt = prompt.trim();
-  const isSessionSlashCommand = KNOWN_SESSION_COMMANDS.has(trimmedPrompt);
-
-  if (isSessionSlashCommand) {
-    log(`Handling session command: ${trimmedPrompt}`);
-    let slashSessionId: string | undefined;
-    let compactBoundarySeen = false;
-    let hadError = false;
-    let resultEmitted = false;
-
-    try {
-      for await (const message of query({
-        prompt: trimmedPrompt,
-        options: {
-          cwd: '/workspace/group',
-          resume: sessionId,
-          systemPrompt: undefined,
-          allowedTools: [],
-          env: sdkEnv,
-          permissionMode: 'bypassPermissions' as const,
-          allowDangerouslySkipPermissions: true,
-          settingSources: ['project', 'user'] as const,
-          hooks: {
-            PreCompact: [{ hooks: [createPreCompactHook()] }],
-          },
-        },
-      })) {
-        const msgType =
-          message.type === 'system'
-            ? `system/${(message as { subtype?: string }).subtype}`
-            : message.type;
-        log(`[slash-cmd] type=${msgType}`);
-
-        if (message.type === 'system' && message.subtype === 'init') {
-          slashSessionId = message.session_id;
-          log(`Session after slash command: ${slashSessionId}`);
-        }
-
-        // Observe compact_boundary to confirm compaction completed
-        if (
-          message.type === 'system' &&
-          (message as { subtype?: string }).subtype === 'compact_boundary'
-        ) {
-          compactBoundarySeen = true;
-          log('Compact boundary observed — compaction completed');
-        }
-
-        if (message.type === 'result') {
-          const resultSubtype = (message as { subtype?: string }).subtype;
-          const textResult =
-            'result' in message
-              ? (message as { result?: string }).result
-              : null;
-
-          if (resultSubtype?.startsWith('error')) {
-            hadError = true;
-            writeOutput({
-              status: 'error',
-              result: null,
-              error: textResult || 'Session command failed.',
-              newSessionId: slashSessionId,
-            });
-          } else {
-            writeOutput({
-              status: 'success',
-              result: textResult || 'Conversation compacted.',
-              newSessionId: slashSessionId,
-            });
-          }
-          resultEmitted = true;
-        }
-      }
-    } catch (err) {
-      hadError = true;
-      const errorMsg = err instanceof Error ? err.message : String(err);
-      log(`Slash command error: ${errorMsg}`);
-      writeOutput({ status: 'error', result: null, error: errorMsg });
-    }
-
-    log(
-      `Slash command done. compactBoundarySeen=${compactBoundarySeen}, hadError=${hadError}`,
-    );
-
-    // Warn if compact_boundary was never observed — compaction may not have occurred
-    if (!hadError && !compactBoundarySeen) {
-      log(
-        'WARNING: compact_boundary was not observed. Compaction may not have completed.',
-      );
-    }
-
-    // Only emit final session marker if no result was emitted yet and no error occurred
-    if (!resultEmitted && !hadError) {
-      writeOutput({
-        status: 'success',
-        result: compactBoundarySeen
-          ? 'Conversation compacted.'
-          : 'Compaction requested but compact_boundary was not observed.',
-        newSessionId: slashSessionId,
-      });
-    } else if (!hadError) {
-      // Emit session-only marker so host updates session tracking
-      writeOutput({
-        status: 'success',
-        result: null,
-        newSessionId: slashSessionId,
-      });
-    }
+  if (KNOWN_SESSION_COMMANDS.has(trimmedPrompt)) {
+    await handleSlashCommand(trimmedPrompt, sessionId, sdkEnv);
     return;
   }
-  // --- End slash command handling ---
 
   // Query loop: run query → wait for IPC message → run new query → repeat
   let resumeAt: string | undefined;
@@ -1008,9 +646,17 @@ async function main(): Promise<void> {
         sdkEnv,
         controlServer,
         resumeAt,
+        (fn) => {
+          endCurrentStream = fn;
+        },
       );
+      endCurrentStream = null;
+
       if (resetRequested) {
-        log('Session reset requested, clearing session state');
+        log('Session reset requested, compacting then clearing session');
+        const compactSessionId = queryResult.newSessionId || sessionId;
+        if (compactSessionId)
+          await handleSlashCommand('/compact', compactSessionId, sdkEnv);
         sessionId = undefined;
         resumeAt = undefined;
         resetRequested = false;
@@ -1031,8 +677,12 @@ async function main(): Promise<void> {
         break;
       }
 
-      // Emit session update so host can track it
-      writeOutput({ status: 'success', result: null, newSessionId: sessionId });
+      // Emit session update so host can track it ('' signals host to clear session on reset)
+      writeOutput({
+        status: 'success',
+        result: null,
+        newSessionId: sessionId ?? '',
+      });
 
       log('Query ended, waiting for next IPC message...');
 
