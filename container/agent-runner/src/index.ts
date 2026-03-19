@@ -595,7 +595,13 @@ async function runQuery(
   };
   const toolsUsed = new Set<string>();
   let pendingOutput: ContainerOutput | null = null;
+  let pendingTimer: ReturnType<typeof setTimeout> | null = null;
+  let hadVisibleOutput = false;
   const flushPending = (append?: string) => {
+    if (pendingTimer) {
+      clearTimeout(pendingTimer);
+      pendingTimer = null;
+    }
     if (!pendingOutput && !append) return;
     const out = pendingOutput || {
       status: 'success' as const,
@@ -605,6 +611,10 @@ async function runQuery(
     if (append) out.result = (out.result || '') + append;
     writeOutput(out);
     pendingOutput = null;
+  };
+  const bufferOutput = (out: ContainerOutput) => {
+    pendingOutput = out;
+    pendingTimer = setTimeout(() => flushPending(), 500);
   };
 
   for await (const message of query({
@@ -691,20 +701,19 @@ async function runQuery(
           .replace(/<internal>[\s\S]*?<\/internal>/g, '')
           .trim();
         if (text) {
+          if (visible) hadVisibleOutput = true;
           const emojis = visible
             ? [...toolsUsed].map((t) => TOOL_EMOJI[t] || '🔧').join('')
             : '';
           toolsUsed.clear();
           const output = emojis ? `${text} ${emojis}` : text;
-          pendingOutput = { status: 'success', result: output, newSessionId };
+          bufferOutput({ status: 'success', result: output, newSessionId });
         }
       }
-    } else {
-      if (message.type === 'result') {
-        const emojis = [...toolsUsed]
-          .map((t) => TOOL_EMOJI[t] || '🔧')
-          .join('');
-        toolsUsed.clear();
+    } else if (message.type === 'result') {
+      const emojis = [...toolsUsed].map((t) => TOOL_EMOJI[t] || '🔧').join('');
+      toolsUsed.clear();
+      if (hadVisibleOutput) {
         flushPending(emojis ? ` ${emojis}✓` : ' ✓');
       } else {
         flushPending();
@@ -725,7 +734,7 @@ async function runQuery(
     }
   }
 
-  flushPending(' ✓');
+  flushPending();
   ipcPolling = false;
   log(
     `Query done. Messages: ${messageCount}, results: ${resultCount}, lastAssistantUuid: ${lastAssistantUuid || 'none'}, closedDuringQuery: ${closedDuringQuery}`,
