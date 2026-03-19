@@ -14,7 +14,7 @@
  *   Final marker after loop ends signals completion.
  */
 
-const RUNNER_VERSION = '1.6.9';
+const RUNNER_VERSION = '1.7.0';
 
 import fs from 'fs';
 import path from 'path';
@@ -622,7 +622,7 @@ async function main(): Promise<void> {
 
   const controlServer = createControlServer(() => {
     resetRequested = true;
-    endCurrentStream?.();
+    setImmediate(() => endCurrentStream?.());
   });
 
   // Clean up stale close sentinel from previous container run
