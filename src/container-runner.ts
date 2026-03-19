@@ -7,6 +7,13 @@ import fs from 'fs';
 import path from 'path';
 
 import {
+  CONTAINER_HOST_GATEWAY,
+  CONTAINER_RUNTIME_BIN,
+  hostGatewayArgs,
+  readonlyMountArgs,
+  stopContainer,
+} from './container-runtime.ts';
+import {
   CONTAINER_IMAGE,
   CONTAINER_MAX_OUTPUT_SIZE,
   CONTAINER_TIMEOUT,
@@ -14,17 +21,11 @@ import {
   DATA_DIR,
   GROUPS_DIR,
   IDLE_TIMEOUT,
+  IPC_MCP_PORT,
   TIMEZONE,
 } from './config.ts';
 import { resolveGroupFolderPath, resolveGroupIpcPath } from './group-folder.ts';
 import { logger } from './logger.ts';
-import {
-  CONTAINER_HOST_GATEWAY,
-  CONTAINER_RUNTIME_BIN,
-  hostGatewayArgs,
-  readonlyMountArgs,
-  stopContainer,
-} from './container-runtime.ts';
 import { detectAuthMode } from './credential-proxy.ts';
 import { validateAdditionalMounts } from './mount-security.ts';
 import type { RegisteredGroup } from './types.ts';
@@ -42,6 +43,7 @@ export interface ContainerInput {
   isScheduledTask?: boolean;
   assistantName?: string;
   nanoclawVersion?: string;
+  ipcToken?: string;
 }
 
 export interface ContainerOutput {
@@ -178,8 +180,6 @@ function buildVolumeMounts(
   // Per-group IPC namespace: each group gets its own IPC directory
   // This prevents cross-group privilege escalation via IPC
   const groupIpcDir = resolveGroupIpcPath(group.folder);
-  fs.mkdirSync(path.join(groupIpcDir, 'messages'), { recursive: true });
-  fs.mkdirSync(path.join(groupIpcDir, 'tasks'), { recursive: true });
   fs.mkdirSync(path.join(groupIpcDir, 'input'), { recursive: true });
   mounts.push({
     hostPath: groupIpcDir,
@@ -228,6 +228,7 @@ function getContainerState(name: string): 'running' | 'stopped' | 'none' {
 function buildContainerArgs(
   mounts: VolumeMount[],
   containerName: string,
+  input: ContainerInput,
 ): string[] {
   const args: string[] = ['run', '-i', '--name', containerName];
 
@@ -239,6 +240,15 @@ function buildContainerArgs(
     '-e',
     `ANTHROPIC_BASE_URL=http://${CONTAINER_HOST_GATEWAY}:${CREDENTIAL_PROXY_PORT}`,
   );
+
+  // IPC MCP server (containers call tools here instead of writing IPC files)
+  args.push(
+    '-e',
+    `NANOCLAW_IPC_URL=http://${CONTAINER_HOST_GATEWAY}:${IPC_MCP_PORT}/mcp`,
+  );
+  if (input.ipcToken) {
+    args.push('-e', `NANOCLAW_IPC_TOKEN=${input.ipcToken}`);
+  }
 
   // Mirror the host's auth method with a placeholder value.
   // API key mode: SDK sends x-api-key, proxy replaces with real key.
@@ -291,7 +301,7 @@ export async function runContainerAgent(
   const mounts = buildVolumeMounts(group, input.isMain);
   const safeName = group.folder.replace(/[^a-zA-Z0-9-]/g, '-');
   const containerName = `nanoclaw-${safeName}`;
-  const containerArgs = buildContainerArgs(mounts, containerName);
+  const containerArgs = buildContainerArgs(mounts, containerName, input);
 
   logger.debug(
     {
@@ -662,32 +672,6 @@ export async function runContainerAgent(
       });
     });
   });
-}
-
-export function writeTasksSnapshot(
-  groupFolder: string,
-  isMain: boolean,
-  tasks: Array<{
-    id: string;
-    groupFolder: string;
-    prompt: string;
-    schedule_type: string;
-    schedule_value: string;
-    status: string;
-    next_run: string | null;
-  }>,
-): void {
-  // Write filtered tasks to the group's IPC directory
-  const groupIpcDir = resolveGroupIpcPath(groupFolder);
-  fs.mkdirSync(groupIpcDir, { recursive: true });
-
-  // Main sees all tasks, others only see their own
-  const filteredTasks = isMain
-    ? tasks
-    : tasks.filter((t) => t.groupFolder === groupFolder);
-
-  const tasksFile = path.join(groupIpcDir, 'current_tasks.json');
-  fs.writeFileSync(tasksFile, JSON.stringify(filteredTasks, null, 2));
 }
 
 export interface AvailableGroup {

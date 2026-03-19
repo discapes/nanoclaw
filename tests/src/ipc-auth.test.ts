@@ -8,7 +8,7 @@ import {
   getTaskById,
   setRegisteredGroup,
 } from '../../src/../src/db.ts';
-import { processTaskIpc, type IpcDeps } from '../../src/../src/ipc.ts';
+import { processTaskIpc, type IpcDeps } from '../../src/../src/ipc-server.ts';
 import type { RegisteredGroup } from '../../src/../src/types.ts';
 
 // Set up registered groups used across tests
@@ -53,6 +53,7 @@ beforeEach(() => {
 
   deps = {
     sendMessage: async () => {},
+    sendFile: async () => {},
     registeredGroups: () => groups,
     registerGroup: (jid, group) => {
       groups[jid] = group;

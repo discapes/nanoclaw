@@ -7,13 +7,9 @@ import {
   SCHEDULER_POLL_INTERVAL,
   TIMEZONE,
 } from './config.ts';
+import { type ContainerOutput, runContainerAgent } from './container-runner.ts';
+import { allocateToken, releaseToken } from './ipc-server.ts';
 import {
-  type ContainerOutput,
-  runContainerAgent,
-  writeTasksSnapshot,
-} from './container-runner.ts';
-import {
-  getAllTasks,
   getDueTasks,
   getTaskById,
   logTaskRun,
@@ -133,23 +129,7 @@ async function runTask(
     return;
   }
 
-  // Update tasks snapshot for container to read (filtered by group)
   const isMain = group.isMain === true;
-  const tasks = getAllTasks();
-  writeTasksSnapshot(
-    task.group_folder,
-    isMain,
-    tasks.map((t) => ({
-      id: t.id,
-      groupFolder: t.group_folder,
-      prompt: t.prompt,
-      schedule_type: t.schedule_type,
-      schedule_value: t.schedule_value,
-      status: t.status,
-      next_run: t.next_run,
-    })),
-  );
-
   let result: string | null = null;
   let error: string | null = null;
 
@@ -172,6 +152,7 @@ async function runTask(
     }, TASK_CLOSE_DELAY_MS);
   };
 
+  const ipcToken = allocateToken(task.group_folder, task.chat_jid, isMain);
   try {
     const output = await runContainerAgent(
       group,
@@ -183,6 +164,7 @@ async function runTask(
         isMain,
         isScheduledTask: true,
         nanoclawVersion: NANOCLAW_VERSION,
+        ipcToken,
       },
       (proc, containerName) =>
         deps.onProcess(task.chat_jid, proc, containerName, task.group_folder),
@@ -220,6 +202,8 @@ async function runTask(
     if (closeTimer) clearTimeout(closeTimer);
     error = err instanceof Error ? err.message : String(err);
     logger.error({ taskId: task.id, error }, 'Task failed');
+  } finally {
+    releaseToken(ipcToken);
   }
 
   const durationMs = Date.now() - startTime;

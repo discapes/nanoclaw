@@ -1,6 +1,6 @@
 {
   "name": "nanoclaw",
-  "version": "1.6",
+  "version": "1.7",
   "description": "Personal Claude assistant. Lightweight, secure, customizable.",
   "type": "module",
   "scripts": {
@@ -17,6 +17,7 @@
     "test:watch": "vitest"
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.26.0",
     "better-sqlite3": "^11.8.1",
     "grammy": "^1.39.3",
     "cron-parser": "^5.5.0",

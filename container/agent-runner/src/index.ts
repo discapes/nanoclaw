@@ -14,7 +14,7 @@
  *   Final marker after loop ends signals completion.
  */
 
-const RUNNER_VERSION = '1.5.1';
+const RUNNER_VERSION = '1.6.0';
 
 import fs from 'fs';
 import path from 'path';
@@ -25,7 +25,6 @@ import {
   type HookCallback,
   type PreCompactHookInput,
 } from '@anthropic-ai/claude-agent-sdk';
-import { fileURLToPath } from 'url';
 
 interface ContainerInput {
   prompt: string;
@@ -493,7 +492,6 @@ function waitForIpcMessage(): Promise<string | null> {
 async function runQuery(
   prompt: string,
   sessionId: string | undefined,
-  mcpServerPath: string,
   containerInput: ContainerInput,
   sdkEnv: Record<string, string | undefined>,
   controlServer: ReturnType<typeof createSdkMcpServer>,
@@ -671,12 +669,10 @@ async function runQuery(
       settingSources: ['project', 'user'],
       mcpServers: {
         nanoclaw: {
-          command: 'node',
-          args: ['--strip-types', mcpServerPath],
-          env: {
-            NANOCLAW_CHAT_JID: containerInput.chatJid,
-            NANOCLAW_GROUP_FOLDER: containerInput.groupFolder,
-            NANOCLAW_IS_MAIN: containerInput.isMain ? '1' : '0',
+          type: 'http' as const,
+          url: process.env.NANOCLAW_IPC_URL!,
+          headers: {
+            Authorization: `Bearer ${process.env.NANOCLAW_IPC_TOKEN}`,
           },
         },
         'agent-control': controlServer,
@@ -787,9 +783,6 @@ async function main(): Promise<void> {
   // Credentials are injected by the host's credential proxy via ANTHROPIC_BASE_URL.
   // No real secrets exist in the container environment.
   const sdkEnv: Record<string, string | undefined> = { ...process.env };
-
-  const __dirname = path.dirname(fileURLToPath(import.meta.url));
-  const mcpServerPath = path.join(__dirname, 'ipc-mcp-stdio.ts');
 
   let sessionId = containerInput.sessionId;
   let resetRequested = false;
@@ -980,7 +973,6 @@ async function main(): Promise<void> {
       const queryResult = await runQuery(
         prompt,
         sessionId,
-        mcpServerPath,
         containerInput,
         sdkEnv,
         controlServer,

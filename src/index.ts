@@ -5,6 +5,7 @@ import {
   ASSISTANT_NAME,
   CREDENTIAL_PROXY_PORT,
   IDLE_TIMEOUT,
+  IPC_MCP_PORT,
   NANOCLAW_VERSION,
   POLL_INTERVAL,
   TIMEZONE,
@@ -20,7 +21,6 @@ import {
   type ContainerOutput,
   runContainerAgent,
   writeGroupsSnapshot,
-  writeTasksSnapshot,
 } from './container-runner.ts';
 import {
   cleanupOrphans,
@@ -31,7 +31,6 @@ import {
   getAllChats,
   getAllRegisteredGroups,
   getAllSessions,
-  getAllTasks,
   getMessagesSince,
   getNewMessages,
   getRegisteredGroup,
@@ -45,7 +44,12 @@ import {
 } from './db.ts';
 import { GroupQueue } from './group-queue.ts';
 import { resolveGroupFolderPath } from './group-folder.ts';
-import { startIpcWatcher } from './ipc.ts';
+import {
+  allocateToken,
+  releaseToken,
+  startIpcMcpServer,
+  type IpcDeps,
+} from './ipc-server.ts';
 import { findChannel, formatMessages, formatOutbound } from './router.ts';
 import {
   restoreRemoteControl,
@@ -313,22 +317,6 @@ async function runAgent(
   const isMain = group.isMain === true;
   const sessionId = sessions[group.folder];
 
-  // Update tasks snapshot for container to read (filtered by group)
-  const tasks = getAllTasks();
-  writeTasksSnapshot(
-    group.folder,
-    isMain,
-    tasks.map((t) => ({
-      id: t.id,
-      groupFolder: t.group_folder,
-      prompt: t.prompt,
-      schedule_type: t.schedule_type,
-      schedule_value: t.schedule_value,
-      status: t.status,
-      next_run: t.next_run,
-    })),
-  );
-
   // Update available groups snapshot (main group only can see all groups)
   const availableGroups = getAvailableGroups();
   writeGroupsSnapshot(
@@ -349,6 +337,7 @@ async function runAgent(
       }
     : undefined;
 
+  const ipcToken = allocateToken(group.folder, chatJid, isMain);
   try {
     const output = await runContainerAgent(
       group,
@@ -359,6 +348,7 @@ async function runAgent(
         chatJid,
         isMain,
         nanoclawVersion: NANOCLAW_VERSION,
+        ipcToken,
       },
       (proc, containerName) =>
         queue.registerProcess(chatJid, proc, containerName, group.folder),
@@ -382,6 +372,8 @@ async function runAgent(
   } catch (err) {
     logger.error({ group: group.name, err }, 'Agent error');
     return 'error';
+  } finally {
+    releaseToken(ipcToken);
   }
 }
 
@@ -544,10 +536,13 @@ async function main(): Promise<void> {
     PROXY_BIND_HOST,
   );
 
+  let ipcServer: import('http').Server | undefined;
+
   // Graceful shutdown handlers
   const shutdown = async (signal: string) => {
     logger.info({ signal }, 'Shutdown signal received');
     proxyServer.close();
+    ipcServer?.close();
     await queue.shutdown(10000);
     for (const ch of channels) await ch.disconnect();
     process.exit(0);
@@ -675,7 +670,7 @@ async function main(): Promise<void> {
       if (text) await channel.sendMessage(jid, text);
     },
   });
-  startIpcWatcher({
+  const ipcDeps: IpcDeps = {
     sendMessage: (jid, text) => {
       const channel = findChannel(channels, jid);
       if (!channel) throw new Error(`No channel for JID: ${jid}`);
@@ -702,7 +697,8 @@ async function main(): Promise<void> {
     getAvailableGroups,
     writeGroupsSnapshot: (gf, im, ag, rj) =>
       writeGroupsSnapshot(gf, im, ag, rj),
-  });
+  };
+  ipcServer = await startIpcMcpServer(IPC_MCP_PORT, PROXY_BIND_HOST, ipcDeps);
   queue.setProcessMessagesFn(processGroupMessages);
   recoverPendingMessages();
   startMessageLoop().catch((err) => {
