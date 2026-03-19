@@ -358,7 +358,17 @@ async function runQuery(
       message.type === 'user' &&
       (message as any).message?.content
     ) {
-      const text = extractText((message as any).message.content);
+      const rawContent = (message as any).message.content;
+      log(
+        `Summary raw content type: ${typeof rawContent}, isArray: ${Array.isArray(rawContent)}, keys: ${typeof rawContent === 'object' ? JSON.stringify(Object.keys(rawContent)) : 'n/a'}`,
+      );
+      log(
+        `Summary raw content (first 500): ${JSON.stringify(rawContent).slice(0, 500)}`,
+      );
+      const text = extractText(rawContent);
+      log(
+        `Summary extracted text length: ${text.length}, first 200: ${text.slice(0, 200)}`,
+      );
       if (text && lastArchivePath) {
         try {
           writeSummary(text, lastArchivePath);
@@ -491,7 +501,17 @@ async function handleSlashCommand(
         message.type === 'user' &&
         (message as any).message?.content
       ) {
-        const text = formatValue((message as any).message.content, Infinity);
+        const rawContent = (message as any).message.content;
+        log(
+          `[slash-cmd] Summary raw content type: ${typeof rawContent}, isArray: ${Array.isArray(rawContent)}, keys: ${typeof rawContent === 'object' ? JSON.stringify(Object.keys(rawContent)) : 'n/a'}`,
+        );
+        log(
+          `[slash-cmd] Summary raw content (first 500): ${JSON.stringify(rawContent).slice(0, 500)}`,
+        );
+        const text = extractText(rawContent);
+        log(
+          `[slash-cmd] Summary extracted text length: ${text.length}, first 200: ${text.slice(0, 200)}`,
+        );
         if (text && lastArchivePath) {
           try {
             writeSummary(text, lastArchivePath);
