@@ -45,8 +45,7 @@ import {
 import { GroupQueue } from './group-queue.ts';
 import { resolveGroupFolderPath } from './group-folder.ts';
 import {
-  allocateToken,
-  releaseToken,
+  getGroupToken,
   startIpcMcpServer,
   type IpcDeps,
 } from './ipc-server.ts';
@@ -337,7 +336,7 @@ async function runAgent(
       }
     : undefined;
 
-  const ipcToken = allocateToken(group.folder, chatJid, isMain);
+  const ipcToken = getGroupToken(group.folder, chatJid, isMain);
   try {
     const output = await runContainerAgent(
       group,
@@ -372,8 +371,6 @@ async function runAgent(
   } catch (err) {
     logger.error({ group: group.name, err }, 'Agent error');
     return 'error';
-  } finally {
-    releaseToken(ipcToken);
   }
 }
 

@@ -8,7 +8,7 @@ import {
   TIMEZONE,
 } from './config.ts';
 import { type ContainerOutput, runContainerAgent } from './container-runner.ts';
-import { allocateToken, releaseToken } from './ipc-server.ts';
+import { getGroupToken } from './ipc-server.ts';
 import {
   getDueTasks,
   getTaskById,
@@ -152,7 +152,7 @@ async function runTask(
     }, TASK_CLOSE_DELAY_MS);
   };
 
-  const ipcToken = allocateToken(task.group_folder, task.chat_jid, isMain);
+  const ipcToken = getGroupToken(task.group_folder, task.chat_jid, isMain);
   try {
     const output = await runContainerAgent(
       group,
@@ -202,8 +202,6 @@ async function runTask(
     if (closeTimer) clearTimeout(closeTimer);
     error = err instanceof Error ? err.message : String(err);
     logger.error({ taskId: task.id, error }, 'Task failed');
-  } finally {
-    releaseToken(ipcToken);
   }
 
   const durationMs = Date.now() - startTime;
