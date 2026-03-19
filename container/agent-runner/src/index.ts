@@ -14,7 +14,7 @@
  *   Final marker after loop ends signals completion.
  */
 
-const RUNNER_VERSION = '1.6.0';
+const RUNNER_VERSION = '1.6.2';
 
 import fs from 'fs';
 import path from 'path';
@@ -143,14 +143,14 @@ function extractUserMessages(s: string): string | null {
     .join(' | ');
 }
 
-function truncateMiddle(s: string, max = 1000): string {
+function truncateMiddle(s: string, max = 5000): string {
   s = collapse(s);
   if (s.length <= max) return s;
   const half = Math.floor((max - 5) / 2);
   return s.slice(0, half) + ' ... ' + s.slice(-half);
 }
 
-function formatValue(val: any, max = 500): string {
+function formatValue(val: any, max = 5000): string {
   if (typeof val === 'string') return truncateMiddle(val, max);
   if (Array.isArray(val)) {
     if (val.length === 1) return formatValue(val[0], max);
@@ -205,7 +205,7 @@ function formatMessage(message: any): { label: string; text: string } {
   }
 
   if (type === 'system') {
-    return { label: `system/${message.subtype}`, text: '' };
+    return { label: `system/${message.subtype}`, text: formatValue(message) };
   }
 
   if (type === 'assistant' && message.message?.content) {
@@ -249,7 +249,7 @@ function formatMessage(message: any): { label: string; text: string } {
 
   return {
     label: 'unhandled',
-    text: truncateMiddle(JSON.stringify(message), 500),
+    text: truncateMiddle(JSON.stringify(message)),
   };
 }
 
@@ -282,6 +282,41 @@ function getSessionSummary(
   return null;
 }
 
+function findTranscriptPath(sessionId: string): string | null {
+  const base = path.join(process.env.HOME || '/root', '.claude', 'projects');
+  if (!fs.existsSync(base)) return null;
+  for (const project of fs.readdirSync(base)) {
+    const candidate = path.join(base, project, `${sessionId}.jsonl`);
+    if (fs.existsSync(candidate)) return candidate;
+  }
+  return null;
+}
+
+function archiveSession(sessionId: string, transcriptPath: string): void {
+  const content = fs.readFileSync(transcriptPath, 'utf-8');
+  const messages = parseTranscript(content);
+
+  if (messages.length === 0) {
+    log('No messages to archive');
+    return;
+  }
+
+  const summary = getSessionSummary(sessionId, transcriptPath);
+  const name = summary ? sanitizeFilename(summary) : generateFallbackName();
+
+  const conversationsDir = '/workspace/group/conversations';
+  fs.mkdirSync(conversationsDir, { recursive: true });
+
+  const date = new Date().toISOString().split('T')[0];
+  const filename = `${date}-${name}.md`;
+  const filePath = path.join(conversationsDir, filename);
+
+  const markdown = formatTranscriptMarkdown(messages, summary);
+  fs.writeFileSync(filePath, markdown);
+
+  log(`Archived conversation to ${filePath}`);
+}
+
 /**
  * Archive the full transcript to conversations/ before compaction.
  */
@@ -297,28 +332,7 @@ function createPreCompactHook(): HookCallback {
     }
 
     try {
-      const content = fs.readFileSync(transcriptPath, 'utf-8');
-      const messages = parseTranscript(content);
-
-      if (messages.length === 0) {
-        log('No messages to archive');
-        return {};
-      }
-
-      const summary = getSessionSummary(sessionId, transcriptPath);
-      const name = summary ? sanitizeFilename(summary) : generateFallbackName();
-
-      const conversationsDir = '/workspace/group/conversations';
-      fs.mkdirSync(conversationsDir, { recursive: true });
-
-      const date = new Date().toISOString().split('T')[0];
-      const filename = `${date}-${name}.md`;
-      const filePath = path.join(conversationsDir, filename);
-
-      const markdown = formatTranscriptMarkdown(messages, summary);
-      fs.writeFileSync(filePath, markdown);
-
-      log(`Archived conversation to ${filePath}`);
+      archiveSession(sessionId, transcriptPath);
     } catch (err) {
       log(
         `Failed to archive transcript: ${err instanceof Error ? err.message : String(err)}`,
@@ -799,6 +813,20 @@ async function main(): Promise<void> {
         'Start a fresh conversation session. The next message will begin a new session with no prior history.',
         {},
         async () => {
+          if (sessionId) {
+            const transcriptPath = findTranscriptPath(sessionId);
+            if (transcriptPath) {
+              try {
+                archiveSession(sessionId, transcriptPath);
+              } catch (err) {
+                log(
+                  `Failed to archive on reset: ${err instanceof Error ? err.message : String(err)}`,
+                );
+              }
+            } else {
+              log('No transcript found for archiving on reset');
+            }
+          }
           resetRequested = true;
           fs.writeFileSync(IPC_INPUT_RESET_SENTINEL, '');
           return {
