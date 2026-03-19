@@ -247,12 +247,15 @@ function formatMessage(message: any): { label: string; text: string } {
         const fields = Object.keys(c)
           .filter((k) => k !== 'type')
           .join(', ');
-        return { label: c.type, text: fields };
+        return {
+          label: 'unknown_user',
+          text: truncateMiddle(JSON.stringify(c), 500),
+        };
       });
       if (parts.length === 1) return parts[0];
       return {
-        label: parts[0].label,
-        text: parts.map((p) => p.text).join('  ↵ '),
+        label: 'user_multi',
+        text: parts.map((p) => `${p.label}: ${p.text}`).join(' | '),
       };
     }
   }
@@ -288,7 +291,10 @@ function formatMessage(message: any): { label: string; text: string } {
     };
   }
 
-  return { label: type, text: truncateMiddle(JSON.stringify(message), 500) };
+  return {
+    label: 'unhandled',
+    text: truncateMiddle(JSON.stringify(message), 500),
+  };
 }
 
 function getSessionSummary(
