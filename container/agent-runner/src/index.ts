@@ -14,7 +14,7 @@
  *   Final marker after loop ends signals completion.
  */
 
-const RUNNER_VERSION = '1.6.8';
+const RUNNER_VERSION = '1.6.9';
 
 import fs from 'fs';
 import path from 'path';
@@ -36,6 +36,7 @@ import {
 import {
   truncateMiddle,
   extractUserMessages,
+  extractText,
   formatMessage,
   formatValue,
 } from './format.ts';
@@ -357,7 +358,7 @@ async function runQuery(
       message.type === 'user' &&
       (message as any).message?.content
     ) {
-      const text = formatValue((message as any).message.content, Infinity);
+      const text = extractText((message as any).message.content);
       if (text && lastArchivePath) {
         try {
           writeSummary(text, lastArchivePath);

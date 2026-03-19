@@ -28,6 +28,14 @@ function formatFields(obj: Record<string, any>, max = 200): string {
     .join(', ');
 }
 
+export function extractText(val: any): string {
+  if (typeof val === 'string') return val;
+  if (Array.isArray(val))
+    return val.map(extractText).filter(Boolean).join('\n');
+  if (val?.type === 'text' && val.text) return val.text;
+  return '';
+}
+
 export function formatValue(val: any, max = 5000): string {
   if (typeof val === 'string') return truncateMiddle(val, max);
   if (Array.isArray(val)) {
