@@ -14,7 +14,7 @@
  *   Final marker after loop ends signals completion.
  */
 
-const RUNNER_VERSION = '1.5';
+const RUNNER_VERSION = '1.5.1';
 
 import fs from 'fs';
 import path from 'path';
@@ -151,6 +151,16 @@ function truncateMiddle(s: string, max = 1000): string {
   return s.slice(0, half) + ' ... ' + s.slice(-half);
 }
 
+function formatFields(obj: Record<string, any>, max = 200): string {
+  return Object.entries(obj)
+    .map(
+      ([k, v]) =>
+        `${k}=${truncateMiddle(typeof v === 'string' ? v : JSON.stringify(v), max)}`,
+    )
+    .join(', ');
+}
+
+// See docs/sdk-message-types.md for the full schema of each message type.
 function formatMessage(message: any): { label: string; text: string } {
   const type = message.type;
 
@@ -179,30 +189,36 @@ function formatMessage(message: any): { label: string; text: string } {
 
   if (type === 'assistant' && message.message?.content) {
     const texts: string[] = [];
+    const thinking: string[] = [];
     const tools: string[] = [];
     for (const c of message.message.content) {
       if (c.type === 'text') {
         texts.push(truncateMiddle(c.text));
-      } else if (c.type === 'tool_use') {
-        const params = Object.entries(c.input || {})
-          .map(
-            ([k, v]) =>
-              `${k}=${truncateMiddle(typeof v === 'string' ? v : JSON.stringify(v), 200)}`,
-          )
+      } else if (c.type === 'tool_use' || c.type === 'server_tool_use') {
+        tools.push(`${c.name}(${formatFields(c.input || {})})`);
+      } else if (c.type === 'thinking') {
+        thinking.push(truncateMiddle(c.thinking || '(redacted)'));
+      } else {
+        const fields = Object.keys(c)
+          .filter((k) => k !== 'type')
           .join(', ');
-        tools.push(`${c.name}(${params})`);
+        texts.push(`[${c.type}${fields ? ': ' + fields : ''}]`);
       }
     }
-    if (tools.length > 0 && texts.length === 0) {
+    const allTexts = [...thinking.map((t) => `[thinking] ${t}`), ...texts];
+    if (tools.length > 0 && texts.length === 0 && thinking.length === 0) {
       return { label: 'tool_use', text: tools.join(', ') };
     }
     if (tools.length > 0) {
       return {
-        label: 'assistant',
-        text: texts.join('  ↵ ') + ' | tools: ' + tools.join(', '),
+        label: texts.length > 0 ? 'assistant' : 'thinking',
+        text: allTexts.join('  ↵ ') + ' | tools: ' + tools.join(', '),
       };
     }
-    return { label: 'assistant', text: texts.join('  ↵ ') };
+    if (texts.length === 0 && thinking.length > 0) {
+      return { label: 'thinking', text: thinking.join('  ↵ ') };
+    }
+    return { label: 'assistant', text: allTexts.join('  ↵ ') };
   }
 
   if (type === 'user' && message.message?.content) {
@@ -212,10 +228,14 @@ function formatMessage(message: any): { label: string; text: string } {
     if (Array.isArray(content)) {
       const parts = content.map((c: any) => {
         if (c.type === 'tool_result') {
-          const text =
-            typeof c.content === 'string'
-              ? c.content
-              : JSON.stringify(c.content);
+          let text: string;
+          if (typeof c.content === 'string') {
+            text = c.content;
+          } else {
+            let obj = c.content;
+            if (Array.isArray(obj) && obj.length === 1) obj = obj[0];
+            text = obj?.type === 'image' ? '[image]' : formatFields(obj, 500);
+          }
           const prefix = c.is_error ? 'ERROR: ' : '';
           return {
             label: 'tool_result',
@@ -224,7 +244,10 @@ function formatMessage(message: any): { label: string; text: string } {
         }
         if (c.type === 'text')
           return { label: 'user', text: truncateMiddle(c.text) };
-        return { label: c.type, text: '' };
+        const fields = Object.keys(c)
+          .filter((k) => k !== 'type')
+          .join(', ');
+        return { label: c.type, text: fields };
       });
       if (parts.length === 1) return parts[0];
       return {
@@ -600,17 +623,24 @@ async function runQuery(
     Grep: '🔎',
     WebSearch: '🔍',
     WebFetch: '🌐',
-    mcp__nanoclaw__schedule_task: '\\[⏰📅\\]',
-    mcp__nanoclaw__list_tasks: '\\[⏰📋\\]',
-    mcp__nanoclaw__pause_task: '\\[⏰⏸\\]',
-    mcp__nanoclaw__resume_task: '\\[⏰▶\\]',
-    mcp__nanoclaw__cancel_task: '\\[⏰❌\\]',
-    mcp__nanoclaw__update_task: '\\[⏰✏️\\]',
+    mcp__nanoclaw__schedule_task: '\\[⏰📅]',
+    mcp__nanoclaw__list_tasks: '\\[⏰📋]',
+    mcp__nanoclaw__pause_task: '\\[⏰⏸]',
+    mcp__nanoclaw__resume_task: '\\[⏰▶]',
+    mcp__nanoclaw__cancel_task: '\\[⏰❌]',
+    mcp__nanoclaw__update_task: '\\[⏰✏️]',
     'mcp__agent-control__stop_container': '🛑',
     'mcp__agent-control__reset_session': '🔄',
     Skill: '🧩',
   };
   const toolsUsed = new Set<string>();
+  let pendingOutput: ContainerOutput | null = null;
+  const flushPending = (append?: string) => {
+    if (!pendingOutput) return;
+    if (append && pendingOutput.result) pendingOutput.result += append;
+    writeOutput(pendingOutput);
+    pendingOutput = null;
+  };
 
   for await (const message of query({
     prompt: stream,
@@ -678,8 +708,10 @@ async function runQuery(
       lastAssistantUuid = (message as { uuid: string }).uuid;
     }
 
-    // Stream assistant text so intermediate messages (before tool calls) aren't lost
+    // Stream assistant text so intermediate messages (before tool calls) aren't lost.
+    // Buffer the output so we can append a symbol if it turns out to be the final message.
     if (message.type === 'assistant' && 'message' in message) {
+      flushPending();
       const msg = (message as any).message;
       if (Array.isArray(msg?.content)) {
         for (const c of msg.content) {
@@ -699,9 +731,12 @@ async function runQuery(
             : '';
           toolsUsed.clear();
           const output = emojis ? `${text} ${emojis}` : text;
-          writeOutput({ status: 'success', result: output, newSessionId });
+          pendingOutput = { status: 'success', result: output, newSessionId };
         }
       }
+    } else {
+      const isFinal = message.type === 'result';
+      flushPending(isFinal ? ' ✓' : undefined);
     }
 
     if (message.type === 'system' && message.subtype === 'init') {
@@ -718,6 +753,7 @@ async function runQuery(
     }
   }
 
+  flushPending(' ✓');
   ipcPolling = false;
   log(
     `Query done. Messages: ${messageCount}, results: ${resultCount}, lastAssistantUuid: ${lastAssistantUuid || 'none'}, closedDuringQuery: ${closedDuringQuery}`,

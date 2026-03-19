@@ -20,6 +20,7 @@ Single Node.js process with skill-based channel system. Channels (WhatsApp, Tele
 | `src/db.ts`                         | SQLite operations                                          |
 | `groups/{name}/CLAUDE.md`           | Per-group memory (isolated)                                |
 | `container/skills/agent-browser.md` | Browser automation tool (available to all agents via Bash) |
+| `container/agent-runner/docs/sdk-message-types.md` | Claude Agent SDK message type reference             |
 
 ## Skills
 
