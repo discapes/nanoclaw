@@ -390,26 +390,22 @@ export class TelegramChannel implements Channel {
       return;
     }
 
-    try {
-      const numericId = jid.replace(/^tg:/, '');
+    const numericId = jid.replace(/^tg:/, '');
 
-      // Telegram has a 4096 character limit per message — split if needed
-      const MAX_LENGTH = 4096;
-      if (text.length <= MAX_LENGTH) {
-        await sendTelegramMessage(this.bot.api, numericId, text);
-      } else {
-        for (let i = 0; i < text.length; i += MAX_LENGTH) {
-          await sendTelegramMessage(
-            this.bot.api,
-            numericId,
-            text.slice(i, i + MAX_LENGTH),
-          );
-        }
+    // Telegram has a 4096 character limit per message — split if needed
+    const MAX_LENGTH = 4096;
+    if (text.length <= MAX_LENGTH) {
+      await sendTelegramMessage(this.bot.api, numericId, text);
+    } else {
+      for (let i = 0; i < text.length; i += MAX_LENGTH) {
+        await sendTelegramMessage(
+          this.bot.api,
+          numericId,
+          text.slice(i, i + MAX_LENGTH),
+        );
       }
-      logger.info({ jid, length: text.length }, 'Telegram message sent');
-    } catch (err) {
-      logger.error({ jid, err }, 'Failed to send Telegram message');
     }
+    logger.info({ jid, length: text.length }, 'Telegram message sent');
   }
 
   async sendFile(
@@ -422,27 +418,23 @@ export class TelegramChannel implements Channel {
       return;
     }
 
-    try {
-      const numericId = jid.replace(/^tg:/, '');
-      const file = new InputFile(filePath);
-      const ext = path.extname(filePath).toLowerCase();
-      const imageExts = new Set(['.jpg', '.jpeg', '.png', '.gif', '.webp']);
+    const numericId = jid.replace(/^tg:/, '');
+    const file = new InputFile(filePath);
+    const ext = path.extname(filePath).toLowerCase();
+    const imageExts = new Set(['.jpg', '.jpeg', '.png', '.gif', '.webp']);
 
-      if (imageExts.has(ext)) {
-        await this.bot.api.sendPhoto(numericId, file, {
-          caption,
-          parse_mode: 'MarkdownV2',
-        });
-      } else {
-        await this.bot.api.sendDocument(numericId, file, {
-          caption,
-          parse_mode: 'MarkdownV2',
-        });
-      }
-      logger.info({ jid, filePath }, 'Telegram file sent');
-    } catch (err) {
-      logger.error({ jid, filePath, err }, 'Failed to send Telegram file');
+    if (imageExts.has(ext)) {
+      await this.bot.api.sendPhoto(numericId, file, {
+        caption,
+        parse_mode: 'MarkdownV2',
+      });
+    } else {
+      await this.bot.api.sendDocument(numericId, file, {
+        caption,
+        parse_mode: 'MarkdownV2',
+      });
     }
+    logger.info({ jid, filePath }, 'Telegram file sent');
   }
 
   isConnected(): boolean {
