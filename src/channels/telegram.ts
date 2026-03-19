@@ -431,10 +431,12 @@ export class TelegramChannel implements Channel {
       if (imageExts.has(ext)) {
         await this.bot.api.sendPhoto(numericId, file, {
           caption,
+          parse_mode: 'MarkdownV2',
         });
       } else {
         await this.bot.api.sendDocument(numericId, file, {
           caption,
+          parse_mode: 'MarkdownV2',
         });
       }
       logger.info({ jid, filePath }, 'Telegram file sent');
