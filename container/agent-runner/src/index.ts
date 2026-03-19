@@ -151,6 +151,25 @@ function truncateMiddle(s: string, max = 1000): string {
   return s.slice(0, half) + ' ... ' + s.slice(-half);
 }
 
+function formatValue(val: any, max = 500): string {
+  if (typeof val === 'string') return truncateMiddle(val, max);
+  if (Array.isArray(val)) {
+    if (val.length === 1) return formatValue(val[0], max);
+    return '[ ' + val.map((v) => formatValue(v, max)).join(' | ') + ' ]';
+  }
+  if (val?.type === 'image') return '<image>';
+  if (val?.type === 'text' && val.text) return truncateMiddle(val.text, max);
+  if (val?.type === 'thinking')
+    return `«${truncateMiddle(val.thinking || 'redacted', max)}»`;
+  if (val?.type === 'tool_use' || val?.type === 'server_tool_use')
+    return `${val.name}(${formatFields(val.input || {})})`;
+  if (val?.type === 'tool_result') {
+    const wrapper = val.is_error ? 'Error' : 'Result';
+    return `${wrapper}(${formatValue(val.content, max)})`;
+  }
+  return formatFields(val, max);
+}
+
 function formatFields(obj: Record<string, any>, max = 200): string {
   return Object.entries(obj)
     .map(
@@ -188,76 +207,11 @@ function formatMessage(message: any): { label: string; text: string } {
   }
 
   if (type === 'assistant' && message.message?.content) {
-    const texts: string[] = [];
-    const thinking: string[] = [];
-    const tools: string[] = [];
-    for (const c of message.message.content) {
-      if (c.type === 'text') {
-        texts.push(truncateMiddle(c.text));
-      } else if (c.type === 'tool_use' || c.type === 'server_tool_use') {
-        tools.push(`${c.name}(${formatFields(c.input || {})})`);
-      } else if (c.type === 'thinking') {
-        thinking.push(truncateMiddle(c.thinking || '(redacted)'));
-      } else {
-        const fields = Object.keys(c)
-          .filter((k) => k !== 'type')
-          .join(', ');
-        texts.push(`[${c.type}${fields ? ': ' + fields : ''}]`);
-      }
-    }
-    const allTexts = [...thinking.map((t) => `[thinking] ${t}`), ...texts];
-    if (tools.length > 0 && texts.length === 0 && thinking.length === 0) {
-      return { label: 'tool_use', text: tools.join(', ') };
-    }
-    if (tools.length > 0) {
-      return {
-        label: texts.length > 0 ? 'assistant' : 'thinking',
-        text: allTexts.join('  ↵ ') + ' | tools: ' + tools.join(', '),
-      };
-    }
-    if (texts.length === 0 && thinking.length > 0) {
-      return { label: 'thinking', text: thinking.join('  ↵ ') };
-    }
-    return { label: 'assistant', text: allTexts.join('  ↵ ') };
+    return { label: 'assistant', text: formatValue(message.message.content) };
   }
 
   if (type === 'user' && message.message?.content) {
-    const content = message.message.content;
-    if (typeof content === 'string')
-      return { label: 'user', text: truncateMiddle(content) };
-    if (Array.isArray(content)) {
-      const parts = content.map((c: any) => {
-        if (c.type === 'tool_result') {
-          let text: string;
-          if (typeof c.content === 'string') {
-            text = c.content;
-          } else {
-            let obj = c.content;
-            if (Array.isArray(obj) && obj.length === 1) obj = obj[0];
-            text = obj?.type === 'image' ? '[image]' : formatFields(obj, 500);
-          }
-          const prefix = c.is_error ? 'ERROR: ' : '';
-          return {
-            label: 'tool_result',
-            text: prefix + truncateMiddle(text, 500),
-          };
-        }
-        if (c.type === 'text')
-          return { label: 'user', text: truncateMiddle(c.text) };
-        const fields = Object.keys(c)
-          .filter((k) => k !== 'type')
-          .join(', ');
-        return {
-          label: 'unknown_user',
-          text: truncateMiddle(JSON.stringify(c), 500),
-        };
-      });
-      if (parts.length === 1) return parts[0];
-      return {
-        label: 'user_multi',
-        text: parts.map((p) => `${p.label}: ${p.text}`).join(' | '),
-      };
-    }
+    return { label: 'user', text: formatValue(message.message.content) };
   }
 
   if (type === 'rate_limit_event') {
