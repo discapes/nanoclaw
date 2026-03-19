@@ -23,9 +23,8 @@ export interface TelegramChannelOpts {
 }
 
 /**
- * Send a message with Telegram Markdown parse mode, falling back to plain text.
- * Claude's output naturally matches Telegram's Markdown v1 format:
- *   *bold*, _italic_, `code`, ```code blocks```, [links](url)
+ * Send a message with Telegram MarkdownV2 parse mode, falling back to plain text.
+ * The agent is instructed to produce MarkdownV2-formatted output directly.
  */
 async function sendTelegramMessage(
   api: { sendMessage: Api['sendMessage'] },
@@ -36,11 +35,10 @@ async function sendTelegramMessage(
   try {
     await api.sendMessage(chatId, text, {
       ...options,
-      parse_mode: 'Markdown',
+      parse_mode: 'MarkdownV2',
     });
   } catch (err) {
-    // Fallback: send as plain text if Markdown parsing fails
-    logger.debug({ err }, 'Markdown send failed, falling back to plain text');
+    logger.debug({ err }, 'MarkdownV2 send failed, falling back to plain text');
     await api.sendMessage(chatId, text, options);
   }
 }
@@ -134,7 +132,7 @@ export class TelegramChannel implements Channel {
 
       ctx.reply(
         `Chat ID: \`tg:${chatId}\`\nName: ${chatName}\nType: ${chatType}`,
-        { parse_mode: 'Markdown' },
+        { parse_mode: 'MarkdownV2' },
       );
     });
 

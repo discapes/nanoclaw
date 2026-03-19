@@ -593,6 +593,18 @@ async function runQuery(
     'mcp__agent-control__reset_session': '🔄',
     Skill: '🧩',
   };
+  // Output buffering: we want to append a ✓ to the final assistant message so
+  // the user knows the agent is done. But the SDK doesn't mark assistant messages
+  // as final — we only know when the result message arrives afterward. So we
+  // buffer each assistant text output and only flush it when:
+  //   - The next assistant message arrives (flush without ✓, buffer the new one)
+  //   - A result message arrives (flush with ✓ appended)
+  //   - 500ms passes with no new message (flush without ✓ to avoid delay)
+  // We don't flush on rate_limit_event since it's informational and always sits
+  // between the assistant and result, which would cause the ✓ to be emitted as
+  // a separate message. We also skip the ✓ entirely when there was no visible
+  // output (e.g. scheduled tasks that only produce <internal> tags), to avoid
+  // sending a lone ✓ as a message to the user.
   const toolsUsed = new Set<string>();
   let pendingOutput: ContainerOutput | null = null;
   let pendingTimer: ReturnType<typeof setTimeout> | null = null;

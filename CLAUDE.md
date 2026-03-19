@@ -79,9 +79,9 @@ The agent runner (`container/agent-runner/src/`) runs inside each container. It 
 
 The agent-runner source is mounted read-only from `container/agent-runner/src/` into all containers. Changes apply to all groups on next container restart.
 
-## Telegram Markdown
+## Telegram MarkdownV2
 
-Messages are sent with `parse_mode: 'Markdown'`. Square brackets `[...]` are silently interpreted as link syntax and stripped (no parse error, so the plain-text fallback doesn't trigger). Escape with `\[...\]`.
+Messages are sent with `parse_mode: 'MarkdownV2'`. The agent is instructed to produce MarkdownV2-formatted output directly. All special characters outside of code blocks must be escaped with `\`. See https://core.telegram.org/bots/api#markdownv2-style.
 
 ## Troubleshooting
 
