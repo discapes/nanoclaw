@@ -596,9 +596,14 @@ async function runQuery(
   const toolsUsed = new Set<string>();
   let pendingOutput: ContainerOutput | null = null;
   const flushPending = (append?: string) => {
-    if (!pendingOutput) return;
-    if (append && pendingOutput.result) pendingOutput.result += append;
-    writeOutput(pendingOutput);
+    if (!pendingOutput && !append) return;
+    const out = pendingOutput || {
+      status: 'success' as const,
+      result: '',
+      newSessionId,
+    };
+    if (append) out.result = (out.result || '') + append;
+    writeOutput(out);
     pendingOutput = null;
   };
 
