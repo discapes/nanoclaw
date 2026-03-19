@@ -700,8 +700,15 @@ async function runQuery(
         }
       }
     } else {
-      const isFinal = message.type === 'result';
-      flushPending(isFinal ? ' ✓' : undefined);
+      if (message.type === 'result') {
+        const emojis = [...toolsUsed]
+          .map((t) => TOOL_EMOJI[t] || '🔧')
+          .join('');
+        toolsUsed.clear();
+        flushPending(emojis ? ` ${emojis}✓` : ' ✓');
+      } else {
+        flushPending();
+      }
     }
 
     if (message.type === 'system' && message.subtype === 'init') {
