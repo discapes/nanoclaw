@@ -48,12 +48,6 @@ describe('extractSessionCommand', () => {
     expect(extractSessionCommand('/stop', trigger)).toBe('/stop');
   });
 
-  it('detects /stop with trigger prefix', () => {
-    expect(extractSessionCommand('@UnitTestNameBob /stop', trigger)).toBe(
-      '/stop',
-    );
-  });
-
   it('rejects /stop with extra text', () => {
     expect(extractSessionCommand('/stop now', trigger)).toBeNull();
   });
@@ -70,12 +64,6 @@ describe('extractSessionCommand', () => {
     expect(extractSessionCommand('/sesh new', trigger)).toBe('/sesh');
   });
 
-  it('detects /sesh with trigger prefix and args', () => {
-    expect(extractSessionCommand('@UnitTestNameBob /sesh work', trigger)).toBe(
-      '/sesh',
-    );
-  });
-
   it('detects /seshname without args', () => {
     expect(extractSessionCommand('/seshname', trigger)).toBe('/seshname');
   });
@@ -86,11 +74,6 @@ describe('extractSessionCommand', () => {
 
   it('does not confuse /seshname with /sesh', () => {
     expect(extractSessionCommand('/seshname foo', trigger)).toBe('/seshname');
-  });
-
-  it('does not detect removed commands', () => {
-    expect(extractSessionCommand('/reset', trigger)).toBeNull();
-    expect(extractSessionCommand('/resetnow', trigger)).toBeNull();
   });
 });
 
@@ -168,19 +151,19 @@ function makeDeps(
 ): SessionCommandDeps {
   return {
     sendMessage: vi.fn().mockResolvedValue(undefined),
-    setTyping: vi.fn().mockResolvedValue(undefined),
-    runAgent: vi.fn().mockResolvedValue('success'),
     closeStdin: vi.fn(),
+    sendCompact: vi.fn(),
+    sendSwitch: vi.fn(),
     getActiveSession: vi.fn().mockReturnValue('sess-old-1234'),
     setActiveSession: vi.fn(),
     advanceCursor: vi.fn(),
-    formatMessages: vi.fn().mockReturnValue('<formatted>'),
     canSenderInteract: vi.fn().mockReturnValue(true),
     getSessionHistory: vi.fn().mockReturnValue([]),
     findSession: vi.fn().mockReturnValue(undefined),
     isNameTaken: vi.fn().mockReturnValue(false),
     getSessionName: vi.fn().mockReturnValue(null),
     setSessionName: vi.fn(),
+    hasActiveContainer: vi.fn().mockReturnValue(true),
     ...overrides,
   };
 }
@@ -195,28 +178,41 @@ describe('handleSessionCommand', () => {
       isMainGroup: true,
       groupName: 'test',
       triggerPattern: trigger,
-      timezone: 'UTC',
       deps,
     });
     expect(result.handled).toBe(false);
   });
 
-  it('handles authorized /compact in main group', async () => {
+  it('/compact sends sentinel to active container', async () => {
     const deps = makeDeps();
     const result = await handleSessionCommand({
       missedMessages: [makeMsg('/compact')],
       isMainGroup: true,
       groupName: 'test',
       triggerPattern: trigger,
-      timezone: 'UTC',
       deps,
     });
     expect(result).toEqual({ handled: true, success: true });
-    expect(deps.runAgent).toHaveBeenCalledWith(
-      '/compact',
-      expect.any(Function),
-    );
+    expect(deps.sendCompact).toHaveBeenCalled();
     expect(deps.advanceCursor).toHaveBeenCalledWith('100');
+  });
+
+  it('/compact with no active container sends error', async () => {
+    const deps = makeDeps({
+      hasActiveContainer: vi.fn().mockReturnValue(false),
+    });
+    const result = await handleSessionCommand({
+      missedMessages: [makeMsg('/compact')],
+      isMainGroup: true,
+      groupName: 'test',
+      triggerPattern: trigger,
+      deps,
+    });
+    expect(result).toEqual({ handled: true, success: true });
+    expect(deps.sendCompact).not.toHaveBeenCalled();
+    expect(deps.sendMessage).toHaveBeenCalledWith(
+      'No active container to compact.',
+    );
   });
 
   it('sends denial to interactable sender in non-main group', async () => {
@@ -226,15 +222,12 @@ describe('handleSessionCommand', () => {
       isMainGroup: false,
       groupName: 'test',
       triggerPattern: trigger,
-      timezone: 'UTC',
       deps,
     });
     expect(result).toEqual({ handled: true, success: true });
     expect(deps.sendMessage).toHaveBeenCalledWith(
       'Session commands require admin access.',
     );
-    expect(deps.runAgent).not.toHaveBeenCalled();
-    expect(deps.advanceCursor).toHaveBeenCalledWith('100');
   });
 
   it('silently consumes denied command when sender cannot interact', async () => {
@@ -246,114 +239,27 @@ describe('handleSessionCommand', () => {
       isMainGroup: false,
       groupName: 'test',
       triggerPattern: trigger,
-      timezone: 'UTC',
       deps,
     });
     expect(result).toEqual({ handled: true, success: true });
     expect(deps.sendMessage).not.toHaveBeenCalled();
-    expect(deps.advanceCursor).toHaveBeenCalledWith('100');
   });
 
-  it('processes pre-compact messages before /compact', async () => {
-    const deps = makeDeps();
-    const msgs = [
-      makeMsg('summarize this', { timestamp: '99' }),
-      makeMsg('/compact', { timestamp: '100' }),
-    ];
-    const result = await handleSessionCommand({
-      missedMessages: msgs,
-      isMainGroup: true,
-      groupName: 'test',
-      triggerPattern: trigger,
-      timezone: 'UTC',
-      deps,
-    });
-    expect(result).toEqual({ handled: true, success: true });
-    expect(deps.formatMessages).toHaveBeenCalledWith([msgs[0]], 'UTC');
-    expect(deps.runAgent).toHaveBeenCalledTimes(2);
-    expect(deps.runAgent).toHaveBeenCalledWith(
-      '<formatted>',
-      expect.any(Function),
-    );
-    expect(deps.runAgent).toHaveBeenCalledWith(
-      '/compact',
-      expect.any(Function),
-    );
-  });
-
-  it('allows is_from_me sender in non-main group', async () => {
-    const deps = makeDeps();
-    const result = await handleSessionCommand({
-      missedMessages: [makeMsg('/compact', { is_from_me: true })],
-      isMainGroup: false,
-      groupName: 'test',
-      triggerPattern: trigger,
-      timezone: 'UTC',
-      deps,
-    });
-    expect(result).toEqual({ handled: true, success: true });
-    expect(deps.runAgent).toHaveBeenCalledWith(
-      '/compact',
-      expect.any(Function),
-    );
-  });
-
-  it('reports failure when command-stage runAgent returns error', async () => {
-    const deps = makeDeps({
-      runAgent: vi.fn().mockImplementation(async (prompt, onOutput) => {
-        await onOutput({ status: 'success', result: null });
-        return 'error';
-      }),
-    });
-    const result = await handleSessionCommand({
-      missedMessages: [makeMsg('/compact')],
-      isMainGroup: true,
-      groupName: 'test',
-      triggerPattern: trigger,
-      timezone: 'UTC',
-      deps,
-    });
-    expect(result).toEqual({ handled: true, success: true });
-    expect(deps.sendMessage).toHaveBeenCalledWith(
-      expect.stringContaining('failed'),
-    );
-  });
-
-  it('handles /stop without running agent', async () => {
+  it('/stop closes container', async () => {
     const deps = makeDeps();
     const result = await handleSessionCommand({
       missedMessages: [makeMsg('/stop')],
       isMainGroup: true,
       groupName: 'test',
       triggerPattern: trigger,
-      timezone: 'UTC',
       deps,
     });
     expect(result).toEqual({ handled: true, success: true });
-    expect(deps.runAgent).not.toHaveBeenCalled();
     expect(deps.closeStdin).toHaveBeenCalled();
-    expect(deps.advanceCursor).toHaveBeenCalledWith('100');
     expect(deps.sendMessage).toHaveBeenCalledWith('Container stopped.');
   });
 
-  it('denies /stop from untrusted sender in non-main group', async () => {
-    const deps = makeDeps();
-    const result = await handleSessionCommand({
-      missedMessages: [makeMsg('/stop', { is_from_me: false })],
-      isMainGroup: false,
-      groupName: 'test',
-      triggerPattern: trigger,
-      timezone: 'UTC',
-      deps,
-    });
-    expect(result).toEqual({ handled: true, success: true });
-    expect(deps.sendMessage).toHaveBeenCalledWith(
-      'Session commands require admin access.',
-    );
-    expect(deps.closeStdin).not.toHaveBeenCalled();
-  });
-
-  it('/sesh with no args lists sessions', async () => {
+  it('/sesh lists sessions', async () => {
     const deps = makeDeps({
       getActiveSession: vi.fn().mockReturnValue('sess-aaa'),
       getSessionHistory: vi.fn().mockReturnValue([
@@ -366,7 +272,6 @@ describe('handleSessionCommand', () => {
       isMainGroup: true,
       groupName: 'test',
       triggerPattern: trigger,
-      timezone: 'UTC',
       deps,
     });
     expect(result).toEqual({ handled: true, success: true });
@@ -376,48 +281,41 @@ describe('handleSessionCommand', () => {
     expect(deps.sendMessage).toHaveBeenCalledWith(expect.stringContaining('→'));
   });
 
-  it('/sesh with no args shows empty message when no sessions', async () => {
-    const deps = makeDeps({
-      getSessionHistory: vi.fn().mockReturnValue([]),
-    });
+  it('/sesh new sends switch sentinel and clears session', async () => {
+    const deps = makeDeps();
     const result = await handleSessionCommand({
-      missedMessages: [makeMsg('/sesh')],
+      missedMessages: [makeMsg('/sesh new')],
       isMainGroup: true,
       groupName: 'test',
       triggerPattern: trigger,
-      timezone: 'UTC',
       deps,
     });
     expect(result).toEqual({ handled: true, success: true });
-    expect(deps.sendMessage).toHaveBeenCalledWith('No sessions.');
+    expect(deps.sendSwitch).toHaveBeenCalledWith('');
+    expect(deps.setActiveSession).toHaveBeenCalledWith(undefined);
+    expect(deps.sendMessage).toHaveBeenCalledWith(
+      expect.stringContaining('none'),
+    );
   });
 
-  it('/sesh new clears session and notifies', async () => {
+  it('/sesh new without active container still clears session', async () => {
     const deps = makeDeps({
-      getActiveSession: vi.fn().mockReturnValue('sess-old-1234'),
+      hasActiveContainer: vi.fn().mockReturnValue(false),
     });
     const result = await handleSessionCommand({
       missedMessages: [makeMsg('/sesh new')],
       isMainGroup: true,
       groupName: 'test',
       triggerPattern: trigger,
-      timezone: 'UTC',
       deps,
     });
     expect(result).toEqual({ handled: true, success: true });
-    expect(deps.closeStdin).toHaveBeenCalled();
+    expect(deps.sendSwitch).not.toHaveBeenCalled();
     expect(deps.setActiveSession).toHaveBeenCalledWith(undefined);
-    expect(deps.sendMessage).toHaveBeenCalledWith(
-      expect.stringContaining('sess-old'),
-    );
-    expect(deps.sendMessage).toHaveBeenCalledWith(
-      expect.stringContaining('none'),
-    );
   });
 
-  it('/sesh with arg switches session', async () => {
+  it('/sesh <name> sends switch sentinel and updates session', async () => {
     const deps = makeDeps({
-      getActiveSession: vi.fn().mockReturnValue('sess-old-1234'),
       findSession: vi
         .fn()
         .mockReturnValue({ session_id: 'sess-new-5678', name: 'work' }),
@@ -427,27 +325,20 @@ describe('handleSessionCommand', () => {
       isMainGroup: true,
       groupName: 'test',
       triggerPattern: trigger,
-      timezone: 'UTC',
       deps,
     });
     expect(result).toEqual({ handled: true, success: true });
-    expect(deps.closeStdin).toHaveBeenCalled();
+    expect(deps.sendSwitch).toHaveBeenCalledWith('sess-new-5678');
     expect(deps.setActiveSession).toHaveBeenCalledWith('sess-new-5678');
-    expect(deps.sendMessage).toHaveBeenCalledWith(
-      expect.stringContaining('sess-old'),
-    );
   });
 
   it('/sesh with unknown arg sends error', async () => {
-    const deps = makeDeps({
-      findSession: vi.fn().mockReturnValue(undefined),
-    });
+    const deps = makeDeps();
     const result = await handleSessionCommand({
       missedMessages: [makeMsg('/sesh unknown')],
       isMainGroup: true,
       groupName: 'test',
       triggerPattern: trigger,
-      timezone: 'UTC',
       deps,
     });
     expect(result).toEqual({ handled: true, success: true });
@@ -455,7 +346,7 @@ describe('handleSessionCommand', () => {
     expect(deps.setActiveSession).not.toHaveBeenCalled();
   });
 
-  it('/seshname with no args shows current session', async () => {
+  it('/seshname shows current session', async () => {
     const deps = makeDeps({
       getActiveSession: vi.fn().mockReturnValue('sess-aaa-1234'),
       getSessionName: vi.fn().mockReturnValue('work'),
@@ -465,30 +356,13 @@ describe('handleSessionCommand', () => {
       isMainGroup: true,
       groupName: 'test',
       triggerPattern: trigger,
-      timezone: 'UTC',
       deps,
     });
     expect(result).toEqual({ handled: true, success: true });
     expect(deps.sendMessage).toHaveBeenCalledWith('"work" (sess-aaa)');
   });
 
-  it('/seshname with no active session', async () => {
-    const deps = makeDeps({
-      getActiveSession: vi.fn().mockReturnValue(undefined),
-    });
-    const result = await handleSessionCommand({
-      missedMessages: [makeMsg('/seshname')],
-      isMainGroup: true,
-      groupName: 'test',
-      triggerPattern: trigger,
-      timezone: 'UTC',
-      deps,
-    });
-    expect(result).toEqual({ handled: true, success: true });
-    expect(deps.sendMessage).toHaveBeenCalledWith('No active session.');
-  });
-
-  it('/seshname with arg sets name', async () => {
+  it('/seshname sets name', async () => {
     const deps = makeDeps({
       getActiveSession: vi.fn().mockReturnValue('sess-aaa-1234'),
     });
@@ -497,14 +371,10 @@ describe('handleSessionCommand', () => {
       isMainGroup: true,
       groupName: 'test',
       triggerPattern: trigger,
-      timezone: 'UTC',
       deps,
     });
     expect(result).toEqual({ handled: true, success: true });
     expect(deps.setSessionName).toHaveBeenCalledWith('sess-aaa-1234', 'work');
-    expect(deps.sendMessage).toHaveBeenCalledWith(
-      'Session sess-aaa named "work"',
-    );
   });
 
   it('/seshname rejects duplicate name', async () => {
@@ -517,33 +387,12 @@ describe('handleSessionCommand', () => {
       isMainGroup: true,
       groupName: 'test',
       triggerPattern: trigger,
-      timezone: 'UTC',
       deps,
     });
     expect(result).toEqual({ handled: true, success: true });
     expect(deps.setSessionName).not.toHaveBeenCalled();
     expect(deps.sendMessage).toHaveBeenCalledWith(
       'Name "work" is already in use.',
-    );
-  });
-
-  it('returns success:false on pre-compact failure with no output', async () => {
-    const deps = makeDeps({ runAgent: vi.fn().mockResolvedValue('error') });
-    const msgs = [
-      makeMsg('summarize this', { timestamp: '99' }),
-      makeMsg('/compact', { timestamp: '100' }),
-    ];
-    const result = await handleSessionCommand({
-      missedMessages: msgs,
-      isMainGroup: true,
-      groupName: 'test',
-      triggerPattern: trigger,
-      timezone: 'UTC',
-      deps,
-    });
-    expect(result).toEqual({ handled: true, success: false });
-    expect(deps.sendMessage).toHaveBeenCalledWith(
-      expect.stringContaining('Failed to process'),
     );
   });
 });

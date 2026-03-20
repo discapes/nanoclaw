@@ -181,14 +181,37 @@ export class GroupQueue {
   /**
    * Signal the active container to wind down by writing a close sentinel.
    */
+  isActive(groupJid: string): boolean {
+    return this.getGroup(groupJid).active;
+  }
+
   closeStdin(groupJid: string): void {
+    this.writeSentinel(groupJid, '_close', '');
+  }
+
+  /**
+   * Signal the active container to compact the current session.
+   */
+  sendCompact(groupJid: string): void {
+    this.writeSentinel(groupJid, '_compact', '');
+  }
+
+  /**
+   * Signal the active container to switch sessions.
+   * Empty sessionId = start new session.
+   */
+  sendSwitch(groupJid: string, sessionId: string): void {
+    this.writeSentinel(groupJid, '_switch', sessionId);
+  }
+
+  private writeSentinel(groupJid: string, name: string, content: string): void {
     const state = this.getGroup(groupJid);
     if (!state.active || !state.groupFolder) return;
 
     const inputDir = path.join(DATA_DIR, 'ipc', state.groupFolder, 'input');
     try {
       fs.mkdirSync(inputDir, { recursive: true });
-      fs.writeFileSync(path.join(inputDir, '_close'), '');
+      fs.writeFileSync(path.join(inputDir, name), content);
     } catch {
       // ignore
     }

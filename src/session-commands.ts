@@ -33,11 +33,6 @@ export function isSessionCommandAllowed(
   return isMainGroup || isFromMe;
 }
 
-export interface AgentResult {
-  status: 'success' | 'error';
-  result?: string | object | null;
-}
-
 export interface SessionHistoryEntry {
   session_id: string;
   name: string | null;
@@ -46,16 +41,12 @@ export interface SessionHistoryEntry {
 
 export interface SessionCommandDeps {
   sendMessage: (text: string) => Promise<void>;
-  setTyping: (typing: boolean) => Promise<void>;
-  runAgent: (
-    prompt: string,
-    onOutput: (result: AgentResult) => Promise<void>,
-  ) => Promise<'success' | 'error'>;
   closeStdin: () => void;
+  sendCompact: () => void;
+  sendSwitch: (sessionId: string) => void;
   getActiveSession: () => string | undefined;
   setActiveSession: (sessionId: string | undefined) => void;
   advanceCursor: (timestamp: string) => void;
-  formatMessages: (msgs: NewMessage[], timezone: string) => string;
   canSenderInteract: (msg: NewMessage) => boolean;
   getSessionHistory: () => SessionHistoryEntry[];
   findSession: (
@@ -64,6 +55,7 @@ export interface SessionCommandDeps {
   isNameTaken: (name: string) => boolean;
   getSessionName: (sessionId: string) => string | null;
   setSessionName: (sessionId: string, name: string) => void;
+  hasActiveContainer: () => boolean;
 }
 
 export function formatSessionLabel(
@@ -85,28 +77,14 @@ export function formatSessionChange(
   return `Session: ${oldLabel} → ${newLabel}`;
 }
 
-function resultToText(result: string | object | null | undefined): string {
-  if (!result) return '';
-  const raw = typeof result === 'string' ? result : JSON.stringify(result);
-  return raw.replace(/<internal>[\s\S]*?<\/internal>/g, '').trim();
-}
-
 export async function handleSessionCommand(opts: {
   missedMessages: NewMessage[];
   isMainGroup: boolean;
   groupName: string;
   triggerPattern: RegExp;
-  timezone: string;
   deps: SessionCommandDeps;
 }): Promise<{ handled: false } | { handled: true; success: boolean }> {
-  const {
-    missedMessages,
-    isMainGroup,
-    groupName,
-    triggerPattern,
-    timezone,
-    deps,
-  } = opts;
+  const { missedMessages, isMainGroup, groupName, triggerPattern, deps } = opts;
 
   const cmdMsg = missedMessages.find(
     (m) => extractSessionCommand(m.content, triggerPattern) !== null,
@@ -127,12 +105,20 @@ export async function handleSessionCommand(opts: {
 
   logger.info({ group: groupName, command }, 'Session command');
 
-  // --- Host-only commands ---
-
   if (command === '/stop') {
     deps.closeStdin();
     deps.advanceCursor(cmdMsg.timestamp);
     await deps.sendMessage('Container stopped.');
+    return { handled: true, success: true };
+  }
+
+  if (command === '/compact') {
+    deps.advanceCursor(cmdMsg.timestamp);
+    if (!deps.hasActiveContainer()) {
+      await deps.sendMessage('No active container to compact.');
+      return { handled: true, success: true };
+    }
+    deps.sendCompact();
     return { handled: true, success: true };
   }
 
@@ -156,25 +142,26 @@ export async function handleSessionCommand(opts: {
       return { handled: true, success: true };
     }
 
-    // /sesh new — start a fresh session
+    const oldId = deps.getActiveSession();
+    const oldName = oldId ? deps.getSessionName(oldId) : null;
+
     if (args === 'new') {
-      const oldId = deps.getActiveSession();
-      const oldName = oldId ? deps.getSessionName(oldId) : null;
-      deps.closeStdin();
+      if (deps.hasActiveContainer()) {
+        deps.sendSwitch('');
+      }
       deps.setActiveSession(undefined);
       await deps.sendMessage(formatSessionChange(oldId, undefined, oldName));
       return { handled: true, success: true };
     }
 
-    // /sesh <id-or-name> — switch to existing session
     const target = deps.findSession(args);
     if (!target) {
       await deps.sendMessage(`Session not found: ${args}`);
       return { handled: true, success: true };
     }
-    const oldId = deps.getActiveSession();
-    const oldName = oldId ? deps.getSessionName(oldId) : null;
-    deps.closeStdin();
+    if (deps.hasActiveContainer()) {
+      deps.sendSwitch(target.session_id);
+    }
     deps.setActiveSession(target.session_id);
     await deps.sendMessage(
       formatSessionChange(oldId, target.session_id, oldName, target.name),
@@ -207,59 +194,5 @@ export async function handleSessionCommand(opts: {
     return { handled: true, success: true };
   }
 
-  // --- Container command: /compact ---
-
-  const cmdIndex = missedMessages.indexOf(cmdMsg);
-  const preCompactMsgs = missedMessages.slice(0, cmdIndex);
-
-  if (preCompactMsgs.length > 0) {
-    const prePrompt = deps.formatMessages(preCompactMsgs, timezone);
-    let hadPreError = false;
-    let preOutputSent = false;
-
-    const preResult = await deps.runAgent(prePrompt, async (result) => {
-      if (result.status === 'error') hadPreError = true;
-      const text = resultToText(result.result);
-      if (text) {
-        await deps.sendMessage(text);
-        preOutputSent = true;
-      }
-      if (result.status === 'success' && result.result === null) {
-        deps.closeStdin();
-      }
-    });
-
-    if (preResult === 'error' || hadPreError) {
-      logger.warn(
-        { group: groupName },
-        'Pre-compact processing failed, aborting session command',
-      );
-      await deps.sendMessage(
-        `Failed to process messages before ${command}. Try again.`,
-      );
-      if (preOutputSent) {
-        deps.advanceCursor(preCompactMsgs[preCompactMsgs.length - 1].timestamp);
-        return { handled: true, success: true };
-      }
-      return { handled: true, success: false };
-    }
-  }
-
-  await deps.setTyping(true);
-
-  let hadCmdError = false;
-  const cmdOutput = await deps.runAgent(command, async (result) => {
-    if (result.status === 'error') hadCmdError = true;
-    const text = resultToText(result.result);
-    if (text) await deps.sendMessage(text);
-  });
-
-  deps.advanceCursor(cmdMsg.timestamp);
-  await deps.setTyping(false);
-
-  if (cmdOutput === 'error' || hadCmdError) {
-    await deps.sendMessage(`${command} failed. The session is unchanged.`);
-  }
-
-  return { handled: true, success: true };
+  return { handled: false };
 }

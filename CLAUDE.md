@@ -76,60 +76,16 @@ ALWAYS When you make changes, REMEMBER TO BUMP the appropriate version.
 
 ## Agent Runner
 
-The agent runner (`container/agent-runner/src/`) runs inside each container. Source is mounted read-only from `container/agent-runner/src/` — changes apply to all groups on next container restart.
+The agent runner (`container/agent-runner/src/`) runs inside each container. A single `query()` call handles an entire multi-turn conversation via `MessageStream` — follow-up messages are piped via `stream.push()`, and the SDK stays open as long as the stream yields. The stream only ends when an IPC sentinel is detected (`_close`, `_compact`, `_switch`), at which point the main loop handles the operation (compact, session switch, or exit) and starts a new `query()` for the next conversation.
 
-### Two loops, two ways to deliver messages
+**IPC sentinels** (written by the host to `/workspace/ipc/input/`):
+- `_close` — exit the container
+- `_compact` — compact the current session (container runs SDK's `/compact` internally)
+- `_switch` — switch sessions (file content = target session ID, empty = new session)
 
-The agent runner has two nested loops and two ways messages reach the SDK:
+This means `/compact` and `/sesh` do NOT restart the container — they interrupt the current query, perform the operation, and resume with a new query in the same container.
 
-**Outer loop** (`main()` → `while(true)` in `container/agent-runner/src/index.ts`):
-```
-main() → runQuery(prompt) → [query ends] → waitForIpcMessage() → runQuery(nextMessage) → ...
-```
-Each iteration calls `runQuery()` then blocks on `waitForIpcMessage()`. This loop exists as a **fallback** for when the SDK ends its `query()` call (emits a `result` message). In practice, during normal conversation, the SDK almost never ends the query on its own because the prompt is a `MessageStream` (async iterable) that stays open. The outer loop mainly matters for edge cases where the SDK ends the query unexpectedly.
-
-**Inner loop** (`runQuery()` → `for await...of query()`):
-```
-runQuery() → query({ prompt: stream }) → [SDK processes stream, emits messages] → ...
-```
-This is where the actual conversation happens. The SDK's `query()` takes a `MessageStream` as the prompt. As long as the stream stays open, the SDK keeps the query alive — it processes a user message, responds, then waits for the next `stream.push()`.
-
-**How follow-up messages arrive during a query:**
-`pollIpcDuringQuery()` runs on a 500ms timer inside `runQuery()`. It checks the IPC input directory for new message files (written by the host via `queue.sendMessage()`). Each message found is pushed onto the stream via `stream.push()`, which the SDK picks up as the next user turn — all within the same `query()` call.
-
-**What this means:** A typical multi-turn conversation is a single `query()` call with many `stream.push()` calls. The log pattern `#N user: ... → #N+1 assistant: ... → #N+2 result: ... → #N+3 user: ...` all happens inside one `for await...of query()` loop. The `result` message between user turns is the SDK signaling it finished its turn, but because the stream is still open, the SDK immediately waits for the next message rather than ending the query.
-
-### When does `query()` end?
-
-The `for await...of query()` loop exits when:
-
-1. **`stream.end()` is called** — The `MessageStream` signals no more messages. This happens when `pollIpcDuringQuery` detects the `_close` sentinel file (written by the host's `closeStdin()`). Sets `closedDuringQuery = true`.
-2. **The SDK decides to end** — Rare in practice since the stream stays open. If it happens, the outer loop catches it: `runQuery()` returns, the outer loop emits a session-update marker, then `waitForIpcMessage()` blocks until the next message or `_close`.
-
-### When does the container exit?
-
-The outer loop breaks when:
-- `closedDuringQuery` is true (close sentinel consumed during query) — immediate exit
-- `waitForIpcMessage()` returns null (close sentinel found between queries) — immediate exit
-
-The container process then exits naturally after `main()` returns.
-
-### Host-side message delivery
-
-The host (`src/index.ts` message loop) delivers messages in two ways:
-
-1. **IPC pipe** (`queue.sendMessage()`) — If a container is already active for the group, the formatted message is written as a JSON file to the IPC directory. The container's poller picks it up and pushes it onto the stream. Fast, no container restart.
-2. **New container** (`queue.enqueueMessageCheck()`) — If no container is active, a new one is spawned via `processGroupMessages` → `runAgent()`. The message is passed as the initial prompt via stdin.
-
-### Implications for slash commands
-
-Since the entire conversation lives inside one `query()` call, **ending the query is not the same as stopping the container**. Writing `_close` does both: it ends the stream (which ends the query) and causes the outer loop to exit. There is currently no mechanism to end just the current query without also stopping the container.
-
-For `/compact`: requires a fresh `query()` with a string prompt (not a `MessageStream`) so the SDK recognizes it as a slash command. This means the active container must be stopped, and a new one spawned with `/compact` as the prompt. The compact container exits after the command completes.
-
-For `/sesh new` and `/sesh <id>`: the active container must be stopped because it's running on the old session. The next message spawns a new container with the correct session ID.
-
-For `/sesh` (list) and `/seshname`: these are purely host-side lookups that don't touch the container at all.
+The agent-runner source is mounted read-only from `container/agent-runner/src/` into all containers. Changes apply to all groups on next container restart.
 
 ## Sessions
 
@@ -155,7 +111,7 @@ Slash commands are sent by users in the chat channel (e.g., Telegram). They can 
 
 | Command | Description |
 |---------|-------------|
-| `/compact` | Compact conversation history into a summary. Session continues with summary as context. Messages before the command in the same batch are processed first. |
+| `/compact` | Compact conversation history into a summary. Session continues with summary as context. Handled inside the running container via `_compact` sentinel. |
 | `/stop` | Stop the active container. Session is preserved unchanged. |
 | `/sesh` | List all sessions for this group with IDs, names, and an arrow marking the active one. |
 | `/sesh new` | Start a fresh session. Closes the active container and clears the session. The old session remains in history. |
@@ -163,7 +119,7 @@ Slash commands are sent by users in the chat channel (e.g., Telegram). They can 
 | `/seshname` | Show the current session's ID and name. |
 | `/seshname <name>` | Name the current session. Rejects duplicate names within the group. |
 
-**Implementation:** `extractSessionCommand` in `src/session-commands.ts` parses commands. `handleSessionCommand` handles auth and execution. `/stop`, `/sesh`, and `/seshname` are host-only (no container spawned). `/compact` spawns a container to run the SDK's built-in `/compact` command.
+**Implementation:** `extractSessionCommand` in `src/session-commands.ts` parses commands. `handleSessionCommand` handles auth and execution. All commands are host-only — `/compact` and `/sesh` (with args) write IPC sentinels to the running container rather than spawning new ones.
 
 ## Telegram MarkdownV2
 

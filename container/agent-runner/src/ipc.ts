@@ -5,6 +5,9 @@ export const IPC_INPUT_DIR = '/workspace/ipc/input';
 export const IPC_INPUT_CLOSE_SENTINEL = path.join(IPC_INPUT_DIR, '_close');
 export const IPC_POLL_MS = 500;
 
+const COMPACT_SENTINEL = path.join(IPC_INPUT_DIR, '_compact');
+const SWITCH_SENTINEL = path.join(IPC_INPUT_DIR, '_switch');
+
 interface SDKUserMessage {
   type: 'user';
   message: { role: 'user'; content: string };
@@ -54,16 +57,37 @@ export class MessageStream {
   }
 }
 
-export function shouldClose(): boolean {
-  if (fs.existsSync(IPC_INPUT_CLOSE_SENTINEL)) {
-    try {
-      fs.unlinkSync(IPC_INPUT_CLOSE_SENTINEL);
-    } catch {
-      /* ignore */
-    }
-    return true;
+export type StopReason =
+  | { type: 'closed' }
+  | { type: 'compact' }
+  | { type: 'switch'; sessionId: string | undefined };
+
+function consumeSentinel(filepath: string): string | false {
+  try {
+    const content = fs.readFileSync(filepath, 'utf-8');
+    fs.unlinkSync(filepath);
+    return content;
+  } catch {
+    return false;
   }
-  return false;
+}
+
+/**
+ * Check for IPC command sentinels. Returns the first one found, or null.
+ * Priority: _close > _compact > _switch
+ */
+export function checkSentinels(): StopReason | null {
+  if (consumeSentinel(IPC_INPUT_CLOSE_SENTINEL) !== false) {
+    return { type: 'closed' };
+  }
+  if (consumeSentinel(COMPACT_SENTINEL) !== false) {
+    return { type: 'compact' };
+  }
+  const switchContent = consumeSentinel(SWITCH_SENTINEL);
+  if (switchContent !== false) {
+    return { type: 'switch', sessionId: switchContent || undefined };
+  }
+  return null;
 }
 
 export function drainIpcInput(): string[] {
@@ -102,14 +126,15 @@ export function drainIpcInput(): string[] {
 }
 
 /**
- * Wait for a new IPC message or _close sentinel.
- * Returns the messages as a single string, or null if _close.
+ * Wait for a new IPC message or sentinel.
+ * Returns messages as a string, or a StopReason.
  */
-export function waitForIpcMessage(): Promise<string | null> {
+export function waitForIpc(): Promise<string | StopReason> {
   return new Promise((resolve) => {
     const poll = () => {
-      if (shouldClose()) {
-        resolve(null);
+      const sentinel = checkSentinels();
+      if (sentinel) {
+        resolve(sentinel);
         return;
       }
       const messages = drainIpcInput();

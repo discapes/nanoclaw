@@ -73,7 +73,6 @@ import {
   extractSessionCommand,
   formatSessionLabel,
   handleSessionCommand,
-  isSessionCommandAllowed,
 } from './session-commands.ts';
 import { startSchedulerLoop } from './task-scheduler.ts';
 import type { Channel, NewMessage, RegisteredGroup } from './types.ts';
@@ -196,21 +195,17 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     isMainGroup,
     groupName: group.name,
     triggerPattern: TRIGGER_PATTERN,
-    timezone: TIMEZONE,
     deps: {
       sendMessage: (text) => channel.sendMessage(chatJid, text),
-      setTyping: (typing) =>
-        channel.setTyping?.(chatJid, typing) ?? Promise.resolve(),
-      runAgent: (prompt, onOutput) =>
-        runAgent(group, prompt, chatJid, onOutput),
       closeStdin: () => queue.closeStdin(chatJid),
+      sendCompact: () => queue.sendCompact(chatJid),
+      sendSwitch: (sid) => queue.sendSwitch(chatJid, sid),
       getActiveSession: () => sessions[group.folder],
       setActiveSession: (id) => updateGroupSession(group.folder, id),
       advanceCursor: (ts) => {
         lastAgentTimestamp[chatJid] = ts;
         saveState();
       },
-      formatMessages,
       canSenderInteract: (msg) => {
         const hasTrigger = TRIGGER_PATTERN.test(msg.content.trim());
         const reqTrigger = !isMainGroup && group.requiresTrigger !== false;
@@ -227,6 +222,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       isNameTaken: (name) => isSessionNameTaken(group.folder, name),
       getSessionName: (id) => getSessionName(group.folder, id),
       setSessionName: (id, name) => setSessionName(group.folder, id, name),
+      hasActiveContainer: () => queue.isActive(chatJid),
     },
   });
   if (cmdResult.handled) return cmdResult.success;
@@ -476,30 +472,8 @@ async function startMessageLoop(): Promise<void> {
           );
 
           if (loopCmdMsg) {
-            const loopCmd = extractSessionCommand(
-              loopCmdMsg.content,
-              TRIGGER_PATTERN,
-            );
-            // Only close the active container for commands that need a fresh
-            // container (/compact) or change the session (/sesh with args).
-            // Read-only commands (/sesh list, /seshname, /stop) don't need to
-            // kill in-flight work. Auth check prevents DoS from untrusted senders.
-            const needsClose =
-              loopCmd === '/compact' ||
-              (loopCmd === '/sesh' &&
-                loopCmdMsg.content
-                  .trim()
-                  .replace(TRIGGER_PATTERN, '')
-                  .trim() !== '/sesh');
-            if (
-              needsClose &&
-              isSessionCommandAllowed(
-                isMainGroup,
-                loopCmdMsg.is_from_me === true,
-              )
-            ) {
-              queue.closeStdin(chatJid);
-            }
+            // Don't pipe session commands via IPC — they're handled by
+            // processGroupMessages which writes the appropriate sentinel.
             queue.enqueueMessageCheck(chatJid);
             continue;
           }

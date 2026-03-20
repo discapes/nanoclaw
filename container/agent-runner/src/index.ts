@@ -3,38 +3,35 @@
  * Runs inside a container, receives config via stdin, outputs result to stdout
  *
  * Input protocol:
- *   Stdin: Full ContainerInput JSON (read until EOF, like before)
+ *   Stdin: Full ContainerInput JSON (read until EOF)
  *   IPC:   Follow-up messages written as JSON files to /workspace/ipc/input/
- *          Files: {type:"message", text:"..."}.json — polled and consumed
- *          Sentinel: /workspace/ipc/input/_close — signals session end
+ *          Sentinels: _close (exit), _compact (compact session), _switch (change session)
  *
  * Stdout protocol:
  *   Each result is wrapped in OUTPUT_START_MARKER / OUTPUT_END_MARKER pairs.
- *   Multiple results may be emitted (one per agent teams result).
- *   Final marker after loop ends signals completion.
  */
 
-const RUNNER_VERSION = '1.9.0';
+const RUNNER_VERSION = '2.0.0';
 
 import fs from 'fs';
 import path from 'path';
 import { query, createSdkMcpServer } from '@anthropic-ai/claude-agent-sdk';
 import { createPreCompactHook } from './archive.ts';
 import {
+  type StopReason,
   MessageStream,
   IPC_INPUT_DIR,
   IPC_INPUT_CLOSE_SENTINEL,
   IPC_POLL_MS,
-  shouldClose,
+  checkSentinels,
   drainIpcInput,
-  waitForIpcMessage,
+  waitForIpc,
 } from './ipc.ts';
 import {
   truncateMiddle,
   extractUserMessages,
   extractText,
   formatMessage,
-  formatValue,
 } from './format.ts';
 
 interface ContainerInput {
@@ -112,12 +109,14 @@ const TOOL_EMOJI: Record<string, string> = {
   Skill: '🧩',
 };
 
-/**
- * Run a single query and stream results via writeOutput.
- * Uses MessageStream (AsyncIterable) to keep isSingleUserTurn=false,
- * allowing agent teams subagents to run to completion.
- * Also pipes IPC messages into the stream during the query.
- */
+// --- Conversation query ---
+
+interface QueryResult {
+  newSessionId?: string;
+  lastAssistantUuid?: string;
+  stopReason: StopReason | null; // null = SDK ended the query on its own
+}
+
 async function runQuery(
   prompt: string,
   sessionId: string | undefined,
@@ -125,11 +124,7 @@ async function runQuery(
   sdkEnv: Record<string, string | undefined>,
   controlServer: ReturnType<typeof createSdkMcpServer>,
   resumeAt?: string,
-): Promise<{
-  newSessionId?: string;
-  lastAssistantUuid?: string;
-  closedDuringQuery: boolean;
-}> {
+): Promise<QueryResult> {
   let newSessionId: string | undefined;
   let lastAssistantUuid: string | undefined;
   let messageCount = 0;
@@ -146,62 +141,47 @@ async function runQuery(
   logUser(prompt);
   stream.push(prompt);
 
-  // Poll IPC for follow-up messages and _close sentinel during the query
+  // IPC poller: drain messages into stream, check sentinels
   let ipcPolling = true;
-  let closedDuringQuery = false;
-  const pollIpcDuringQuery = () => {
+  let stopReason: StopReason | null = null;
+  const pollIpc = () => {
     if (!ipcPolling) return;
-    if (shouldClose()) {
-      log('Close sentinel detected during query, ending stream');
-      closedDuringQuery = true;
-      stream.end();
-      ipcPolling = false;
-      return;
-    }
+    // Drain messages first — they're queued in the stream before any end()
     const messages = drainIpcInput();
     for (const text of messages) {
       logUser(text);
       stream.push(text);
     }
-    setTimeout(pollIpcDuringQuery, IPC_POLL_MS);
+    const sentinel = checkSentinels();
+    if (sentinel) {
+      log(`IPC sentinel: ${sentinel.type}`);
+      stopReason = sentinel;
+      stream.end();
+      ipcPolling = false;
+      return;
+    }
+    setTimeout(pollIpc, IPC_POLL_MS);
   };
-  setTimeout(pollIpcDuringQuery, IPC_POLL_MS);
+  setTimeout(pollIpc, IPC_POLL_MS);
 
-  // Load global CLAUDE.md as additional system context (shared across all groups)
+  // Load global CLAUDE.md
   const globalClaudeMdPath = '/workspace/global/CLAUDE.md';
   let globalClaudeMd: string | undefined;
   if (!containerInput.isMain && fs.existsSync(globalClaudeMdPath)) {
     globalClaudeMd = fs.readFileSync(globalClaudeMdPath, 'utf-8');
   }
 
-  // Discover additional directories mounted at /workspace/extra/*
-  // These are passed to the SDK so their CLAUDE.md files are loaded automatically
+  // Discover extra directories
   const extraDirs: string[] = [];
   const extraBase = '/workspace/extra';
   if (fs.existsSync(extraBase)) {
     for (const entry of fs.readdirSync(extraBase)) {
       const fullPath = path.join(extraBase, entry);
-      if (fs.statSync(fullPath).isDirectory()) {
-        extraDirs.push(fullPath);
-      }
+      if (fs.statSync(fullPath).isDirectory()) extraDirs.push(fullPath);
     }
   }
-  if (extraDirs.length > 0) {
-    log(`Additional directories: ${extraDirs.join(', ')}`);
-  }
 
-  // Output buffering: we want to append a ✓ to the final assistant message so
-  // the user knows the agent is done. But the SDK doesn't mark assistant messages
-  // as final — we only know when the result message arrives afterward. So we
-  // buffer each assistant text output and only flush it when:
-  //   - The next assistant message arrives (flush without ✓, buffer the new one)
-  //   - A result message arrives (flush with ✓ appended)
-  //   - 500ms passes with no new message (flush without ✓ to avoid delay)
-  // We don't flush on rate_limit_event since it's informational and always sits
-  // between the assistant and result, which would cause the ✓ to be emitted as
-  // a separate message. We also skip the ✓ entirely when there was no visible
-  // output (e.g. scheduled tasks that only produce <internal> tags), to avoid
-  // sending a lone ✓ as a message to the user.
+  // Output buffering for ✓ marker
   const toolsUsed = new Set<string>();
   let pendingOutput: ContainerOutput | null = null;
   let pendingTimer: ReturnType<typeof setTimeout> | null = null;
@@ -300,8 +280,6 @@ async function runQuery(
       lastAssistantUuid = (message as { uuid: string }).uuid;
     }
 
-    // Stream assistant text so intermediate messages (before tool calls) aren't lost.
-    // Buffer the output so we can append a symbol if it turns out to be the final message.
     if (message.type === 'assistant' && 'message' in message) {
       flushPending();
       const msg = (message as any).message;
@@ -350,17 +328,7 @@ async function runQuery(
       message.type === 'user' &&
       (message as any).message?.content
     ) {
-      const rawContent = (message as any).message.content;
-      log(
-        `Summary raw content type: ${typeof rawContent}, isArray: ${Array.isArray(rawContent)}, keys: ${typeof rawContent === 'object' ? JSON.stringify(Object.keys(rawContent)) : 'n/a'}`,
-      );
-      log(
-        `Summary raw content (first 500): ${JSON.stringify(rawContent).slice(0, 500)}`,
-      );
-      const text = extractText(rawContent);
-      log(
-        `Summary extracted text length: ${text.length}, first 200: ${text.slice(0, 200)}`,
-      );
+      const text = extractText((message as any).message.content);
       if (text && lastArchivePath) {
         try {
           writeSummary(text, lastArchivePath);
@@ -375,42 +343,43 @@ async function runQuery(
 
     if (message.type === 'result') {
       resultCount++;
-      writeOutput({
-        status: 'success',
-        result: null,
-        newSessionId,
-      });
+      writeOutput({ status: 'success', result: null, newSessionId });
     }
   }
 
   flushPending();
   ipcPolling = false;
   log(
-    `Query done. Messages: ${messageCount}, results: ${resultCount}, lastAssistantUuid: ${lastAssistantUuid || 'none'}, closedDuringQuery: ${closedDuringQuery}`,
+    `Query done. Messages: ${messageCount}, results: ${resultCount}, stopReason: ${stopReason?.type || 'sdk_ended'}`,
   );
-  return { newSessionId, lastAssistantUuid, closedDuringQuery };
+  return { newSessionId, lastAssistantUuid, stopReason };
 }
 
-function createControlServer(): ReturnType<typeof createSdkMcpServer> {
-  return createSdkMcpServer({ name: 'agent-control', tools: [] });
-}
+// --- Compact (SDK slash command) ---
 
-async function handleSlashCommand(
-  prompt: string,
+async function runCompact(
   sessionId: string | undefined,
   sdkEnv: Record<string, string | undefined>,
-): Promise<void> {
-  log(`Handling session command: ${prompt}`);
-  let slashSessionId: string | undefined;
+): Promise<string | undefined> {
+  log(`Compacting session: ${sessionId || 'none'}`);
+  if (!sessionId) {
+    writeOutput({
+      status: 'error',
+      result: null,
+      error: 'No session to compact.',
+    });
+    return undefined;
+  }
+
+  let resultSessionId: string | undefined;
   let lastArchivePath: string | null = null;
   let awaitingSummary = false;
   let compactBoundarySeen = false;
   let hadError = false;
-  let resultEmitted = false;
 
   try {
     for await (const message of query({
-      prompt,
+      prompt: '/compact',
       options: {
         cwd: '/workspace/group',
         resume: sessionId,
@@ -437,11 +406,10 @@ async function handleSlashCommand(
         message.type === 'system'
           ? `system/${(message as { subtype?: string }).subtype}`
           : message.type;
-      log(`[slash-cmd] type=${msgType}`);
+      log(`[compact] type=${msgType}`);
 
       if (message.type === 'system' && message.subtype === 'init') {
-        slashSessionId = message.session_id;
-        log(`Session after slash command: ${slashSessionId}`);
+        resultSessionId = message.session_id;
       }
 
       if (
@@ -450,7 +418,6 @@ async function handleSlashCommand(
       ) {
         compactBoundarySeen = true;
         awaitingSummary = true;
-        log('Compact boundary observed — compaction completed');
       }
 
       if (
@@ -458,17 +425,7 @@ async function handleSlashCommand(
         message.type === 'user' &&
         (message as any).message?.content
       ) {
-        const rawContent = (message as any).message.content;
-        log(
-          `[slash-cmd] Summary raw content type: ${typeof rawContent}, isArray: ${Array.isArray(rawContent)}, keys: ${typeof rawContent === 'object' ? JSON.stringify(Object.keys(rawContent)) : 'n/a'}`,
-        );
-        log(
-          `[slash-cmd] Summary raw content (first 500): ${JSON.stringify(rawContent).slice(0, 500)}`,
-        );
-        const text = extractText(rawContent);
-        log(
-          `[slash-cmd] Summary extracted text length: ${text.length}, first 200: ${text.slice(0, 200)}`,
-        );
+        const text = extractText((message as any).message.content);
         if (text && lastArchivePath) {
           try {
             writeSummary(text, lastArchivePath);
@@ -482,64 +439,32 @@ async function handleSlashCommand(
       }
 
       if (message.type === 'result') {
-        const resultSubtype = (message as { subtype?: string }).subtype;
-        const textResult =
-          'result' in message ? (message as { result?: string }).result : null;
-
-        if (resultSubtype?.startsWith('error')) {
-          hadError = true;
-          writeOutput({
-            status: 'error',
-            result: null,
-            error: textResult || 'Session command failed.',
-            newSessionId: slashSessionId,
-          });
-        } else {
-          writeOutput({
-            status: 'success',
-            result: textResult || 'Conversation compacted.',
-            newSessionId: slashSessionId,
-          });
-        }
-        resultEmitted = true;
+        const subtype = (message as { subtype?: string }).subtype;
+        if (subtype?.startsWith('error')) hadError = true;
       }
     }
   } catch (err) {
     hadError = true;
-    const errorMsg = err instanceof Error ? err.message : String(err);
-    log(`Slash command error: ${errorMsg}`);
-    writeOutput({ status: 'error', result: null, error: errorMsg });
+    log(`Compact error: ${err instanceof Error ? err.message : String(err)}`);
   }
 
-  log(
-    `Slash command done. compactBoundarySeen=${compactBoundarySeen}, hadError=${hadError}`,
-  );
-
-  if (!hadError && !compactBoundarySeen) {
-    log(
-      'WARNING: compact_boundary was not observed. Compaction may not have completed.',
-    );
+  if (!compactBoundarySeen) {
+    log('WARNING: compact_boundary was not observed');
   }
 
-  if (!resultEmitted && !hadError) {
-    writeOutput({
-      status: 'success',
-      result: compactBoundarySeen
-        ? 'Conversation compacted.'
-        : 'Compaction requested but compact_boundary was not observed.',
-      newSessionId: slashSessionId,
-    });
-  } else if (!hadError) {
-    writeOutput({
-      status: 'success',
-      result: null,
-      newSessionId: slashSessionId,
-    });
-  }
+  writeOutput({
+    status: hadError ? 'error' : 'success',
+    result: hadError ? 'Compaction failed.' : 'Conversation compacted.',
+    newSessionId: resultSessionId,
+    error: hadError ? 'Compaction failed' : undefined,
+  });
+
+  return resultSessionId || sessionId;
 }
 
+// --- Main ---
+
 async function main(): Promise<void> {
-  // Copy default dotfiles into /home/node if missing (host mount may be empty)
   for (const f of ['.bashrc', '.profile', '.bash_logout']) {
     const target = path.join('/home/node', f);
     const source = path.join('/etc/skel', f);
@@ -549,7 +474,6 @@ async function main(): Promise<void> {
   }
 
   let containerInput: ContainerInput;
-
   try {
     const stdinData = await readStdin();
     containerInput = JSON.parse(stdinData);
@@ -568,23 +492,24 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  // Credentials are injected by the host's credential proxy via ANTHROPIC_BASE_URL.
-  // No real secrets exist in the container environment.
   const sdkEnv: Record<string, string | undefined> = { ...process.env };
-
   let sessionId = containerInput.sessionId;
   fs.mkdirSync(IPC_INPUT_DIR, { recursive: true });
 
-  const controlServer = createControlServer();
+  const controlServer = createSdkMcpServer({
+    name: 'agent-control',
+    tools: [],
+  });
 
-  // Clean up stale close sentinel from previous container run
-  try {
-    fs.unlinkSync(IPC_INPUT_CLOSE_SENTINEL);
-  } catch {
-    /* ignore */
+  // Clean up stale sentinels from previous container run
+  for (const sentinel of ['_close', '_compact', '_switch']) {
+    try {
+      fs.unlinkSync(path.join(IPC_INPUT_DIR, sentinel));
+    } catch {
+      /* ignore */
+    }
   }
 
-  // Build initial prompt (drain any pending IPC messages too)
   let prompt = containerInput.prompt;
   if (containerInput.isScheduledTask) {
     prompt = `[SCHEDULED TASK at ${new Date().toString()} - The following message was sent automatically and is not coming directly from the user or group.]\n\n${prompt}`;
@@ -595,23 +520,19 @@ async function main(): Promise<void> {
     prompt += '\n' + pending.join('\n');
   }
 
-  // Only known session slash commands are handled here. This prevents
-  // accidental interception of user prompts that happen to start with '/'.
-  const trimmedPrompt = prompt.trim();
-  if (trimmedPrompt === '/compact') {
-    await handleSlashCommand(trimmedPrompt, sessionId, sdkEnv);
-    return;
-  }
-
-  // Query loop: run query → wait for IPC message → run new query → repeat
   let resumeAt: string | undefined;
+
   try {
+    // Main loop: run conversation query, then handle whatever stopped it.
+    // A single query() call handles an entire multi-turn conversation via
+    // MessageStream. The loop only iterates when the conversation must be
+    // interrupted (compact, session switch) or restarted (SDK ended early).
     while (true) {
       log(
         `Starting query (session: ${sessionId || 'new'}, resumeAt: ${resumeAt || 'latest'})...`,
       );
 
-      const queryResult = await runQuery(
+      const result = await runQuery(
         prompt,
         sessionId,
         containerInput,
@@ -620,39 +541,47 @@ async function main(): Promise<void> {
         resumeAt,
       );
 
-      if (queryResult.newSessionId) {
-        sessionId = queryResult.newSessionId;
-      }
-      if (queryResult.lastAssistantUuid) {
-        resumeAt = queryResult.lastAssistantUuid;
-      }
+      if (result.newSessionId) sessionId = result.newSessionId;
+      if (result.lastAssistantUuid) resumeAt = result.lastAssistantUuid;
 
-      // If _close was consumed during the query, exit immediately.
-      // Don't emit a session-update marker (it would reset the host's
-      // idle timer and cause a 30-min delay before the next _close).
-      if (queryResult.closedDuringQuery) {
-        log('Close sentinel consumed during query, exiting');
-        break;
-      }
-
-      // Emit session update so host can track it ('' signals host to clear session on reset)
-      writeOutput({
-        status: 'success',
-        result: null,
-        newSessionId: sessionId ?? '',
-      });
-
-      log('Query ended, waiting for next IPC message...');
-
-      // Wait for the next message or _close sentinel
-      const nextMessage = await waitForIpcMessage();
-      if (nextMessage === null) {
-        log('Close sentinel received, exiting');
-        break;
+      // If the SDK ended on its own (no sentinel), emit a session update.
+      // Then enter the wait loop which handles both messages and sentinels.
+      if (!result.stopReason) {
+        writeOutput({
+          status: 'success',
+          result: null,
+          newSessionId: sessionId ?? '',
+        });
+        log('Query ended (SDK), waiting for next IPC...');
       }
 
-      log(`Got new message (${nextMessage.length} chars), starting new query`);
-      prompt = nextMessage;
+      // Wait loop: handle sentinels, then wait for a user message to start
+      // the next query. Multiple sentinels can arrive before a message.
+      let reason = result.stopReason;
+      while (true) {
+        if (reason?.type === 'closed') return;
+
+        if (reason?.type === 'compact') {
+          sessionId = await runCompact(sessionId, sdkEnv);
+          resumeAt = undefined;
+        } else if (reason?.type === 'switch') {
+          sessionId = reason.sessionId;
+          resumeAt = undefined;
+          writeOutput({
+            status: 'success',
+            result: null,
+            newSessionId: sessionId ?? '',
+          });
+        }
+
+        const next = await waitForIpc();
+        if (typeof next === 'string') {
+          prompt = next;
+          break;
+        }
+        // Another sentinel arrived before a message — handle it too
+        reason = next;
+      }
     }
   } catch (err) {
     const errorMessage = err instanceof Error ? err.message : String(err);
