@@ -361,15 +361,16 @@ async function runAgent(
     new Set(Object.keys(registeredGroups)),
   );
 
-  let notifiedNewSession = false;
+  let lastKnownSessionId: string | undefined = sessionId;
   const wrappedOnOutput = onOutput
     ? async (output: ContainerOutput) => {
         if (output.newSessionId !== undefined) {
           const newId = output.newSessionId || undefined;
+          const prevId = lastKnownSessionId;
           updateGroupSession(group.folder, newId);
+          lastKnownSessionId = newId;
           // Notify when a new session is created (e.g., first message after /sesh new)
-          if (newId && !sessionId && !notifiedNewSession) {
-            notifiedNewSession = true;
+          if (newId && !prevId) {
             const channel = findChannel(channels, chatJid);
             if (channel) {
               const name = getSessionName(group.folder, newId);
