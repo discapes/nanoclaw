@@ -472,9 +472,15 @@ async function startMessageLoop(): Promise<void> {
           );
 
           if (loopCmdMsg) {
-            // Don't pipe session commands via IPC — they're handled by
-            // processGroupMessages which writes the appropriate sentinel.
-            queue.enqueueMessageCheck(chatJid);
+            // Session commands are handled host-side — run processGroupMessages
+            // directly instead of enqueuing (enqueue defers when a container is
+            // active, but session commands don't need the container to be idle).
+            processGroupMessages(chatJid).catch((err) =>
+              logger.error(
+                { chatJid, err },
+                'Error processing session command',
+              ),
+            );
             continue;
           }
           // --- End session command interception ---
