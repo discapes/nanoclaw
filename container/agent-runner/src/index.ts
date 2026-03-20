@@ -15,7 +15,7 @@ const RUNNER_VERSION = '2.0.0';
 
 import fs from 'fs';
 import path from 'path';
-import { query, createSdkMcpServer } from '@anthropic-ai/claude-agent-sdk';
+import { query } from '@anthropic-ai/claude-agent-sdk';
 import { createPreCompactHook } from './archive.ts';
 import {
   type StopReason,
@@ -122,7 +122,6 @@ async function runQuery(
   sessionId: string | undefined,
   containerInput: ContainerInput,
   sdkEnv: Record<string, string | undefined>,
-  controlServer: ReturnType<typeof createSdkMcpServer>,
   resumeAt?: string,
 ): Promise<QueryResult> {
   let newSessionId: string | undefined;
@@ -242,7 +241,6 @@ async function runQuery(
         'Skill',
         'NotebookEdit',
         'mcp__nanoclaw__*',
-        'mcp__agent-control__*',
       ],
       env: sdkEnv,
       permissionMode: 'bypassPermissions',
@@ -256,7 +254,6 @@ async function runQuery(
             Authorization: `Bearer ${process.env.NANOCLAW_IPC_TOKEN}`,
           },
         },
-        'agent-control': controlServer,
       },
       hooks: {
         PreCompact: [
@@ -496,11 +493,6 @@ async function main(): Promise<void> {
   let sessionId = containerInput.sessionId;
   fs.mkdirSync(IPC_INPUT_DIR, { recursive: true });
 
-  const controlServer = createSdkMcpServer({
-    name: 'agent-control',
-    tools: [],
-  });
-
   // Clean up stale sentinels from previous container run
   for (const sentinel of ['_close', '_compact', '_switch']) {
     try {
@@ -537,7 +529,6 @@ async function main(): Promise<void> {
         sessionId,
         containerInput,
         sdkEnv,
-        controlServer,
         resumeAt,
       );
 

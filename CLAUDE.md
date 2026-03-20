@@ -83,7 +83,7 @@ The agent runner (`container/agent-runner/src/`) runs inside each container. A s
 - `_compact` — compact the current session (container runs SDK's `/compact` internally)
 - `_switch` — switch sessions (file content = target session ID, empty = new session)
 
-This means `/compact` and `/sesh` do NOT restart the container — they interrupt the current query, perform the operation, and resume with a new query in the same container.
+This means `/compact` and `/sesh` do NOT restart the container — they interrupt the current query, perform the operation, and resume with a new query in the same container. No MCP tools are registered on the agent — all session control is via IPC sentinels.
 
 The agent-runner source is mounted read-only from `container/agent-runner/src/` into all containers. Changes apply to all groups on next container restart.
 
