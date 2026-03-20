@@ -31,6 +31,8 @@ RUN apt-get update && apt-get install -y \
 
 # Set Chromium path for agent-browser
 ENV BASH_ENV=/home/node/.bashrc
+# because claude code launches POSIX shells
+ENV ENV=/home/node/.bashrc
 ENV AGENT_BROWSER_EXECUTABLE_PATH=/usr/bin/chromium
 ENV PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=/usr/bin/chromium
 
