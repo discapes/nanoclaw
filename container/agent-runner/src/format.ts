@@ -19,7 +19,7 @@ export function extractUserMessages(s: string): string | null {
     .join(' | ');
 }
 
-function formatFields(obj: Record<string, any>, max = 200): string {
+function formatFields(obj: Record<string, any>, max = 5000): string {
   return Object.entries(obj)
     .map(
       ([k, v]) =>
