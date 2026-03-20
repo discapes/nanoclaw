@@ -11,7 +11,13 @@ export function extractSessionCommand(
 ): string | null {
   let text = content.trim();
   text = text.replace(triggerPattern, '').trim();
-  if (text === '/compact') return '/compact';
+  if (
+    text === '/compact' ||
+    text === '/reset' ||
+    text === '/resetnow' ||
+    text === '/stop'
+  )
+    return text;
   return null;
 }
 
@@ -41,6 +47,7 @@ export interface SessionCommandDeps {
     onOutput: (result: AgentResult) => Promise<void>,
   ) => Promise<'success' | 'error'>;
   closeStdin: () => void;
+  clearSession: () => void;
   advanceCursor: (timestamp: string) => void;
   formatMessages: (msgs: NewMessage[], timezone: string) => string;
   /** Whether the denied sender would normally be allowed to interact (for denial messages). */
@@ -97,8 +104,23 @@ export async function handleSessionCommand(opts: {
     return { handled: true, success: true };
   }
 
-  // AUTHORIZED: process pre-compact messages first, then run the command
+  // AUTHORIZED
   logger.info({ group: groupName, command }, 'Session command');
+
+  // /stop and /resetnow are host-only — no container needed.
+  if (command === '/stop') {
+    deps.closeStdin();
+    deps.advanceCursor(cmdMsg.timestamp);
+    await deps.sendMessage('Container stopped.');
+    return { handled: true, success: true };
+  }
+  if (command === '/resetnow') {
+    deps.closeStdin();
+    deps.clearSession();
+    deps.advanceCursor(cmdMsg.timestamp);
+    await deps.sendMessage('Session reset.');
+    return { handled: true, success: true };
+  }
 
   const cmdIndex = missedMessages.indexOf(cmdMsg);
   const preCompactMsgs = missedMessages.slice(0, cmdIndex);

@@ -41,6 +41,48 @@ describe('extractSessionCommand', () => {
   it('is case-sensitive for the command', () => {
     expect(extractSessionCommand('/Compact', trigger)).toBeNull();
   });
+
+  it('detects /reset', () => {
+    expect(extractSessionCommand('/reset', trigger)).toBe('/reset');
+  });
+
+  it('detects /reset with trigger prefix', () => {
+    expect(extractSessionCommand('@UnitTestNameBob /reset', trigger)).toBe(
+      '/reset',
+    );
+  });
+
+  it('detects /stop', () => {
+    expect(extractSessionCommand('/stop', trigger)).toBe('/stop');
+  });
+
+  it('detects /stop with trigger prefix', () => {
+    expect(extractSessionCommand('@UnitTestNameBob /stop', trigger)).toBe(
+      '/stop',
+    );
+  });
+
+  it('rejects /reset with extra text', () => {
+    expect(extractSessionCommand('/reset now', trigger)).toBeNull();
+  });
+
+  it('rejects /stop with extra text', () => {
+    expect(extractSessionCommand('/stop now', trigger)).toBeNull();
+  });
+
+  it('detects /resetnow', () => {
+    expect(extractSessionCommand('/resetnow', trigger)).toBe('/resetnow');
+  });
+
+  it('detects /resetnow with trigger prefix', () => {
+    expect(extractSessionCommand('@UnitTestNameBob /resetnow', trigger)).toBe(
+      '/resetnow',
+    );
+  });
+
+  it('rejects /resetnow with extra text', () => {
+    expect(extractSessionCommand('/resetnow please', trigger)).toBeNull();
+  });
 });
 
 describe('isSessionCommandAllowed', () => {
@@ -84,6 +126,7 @@ function makeDeps(
     setTyping: vi.fn().mockResolvedValue(undefined),
     runAgent: vi.fn().mockResolvedValue('success'),
     closeStdin: vi.fn(),
+    clearSession: vi.fn(),
     advanceCursor: vi.fn(),
     formatMessages: vi.fn().mockReturnValue('<formatted>'),
     canSenderInteract: vi.fn().mockReturnValue(true),
@@ -225,6 +268,73 @@ describe('handleSessionCommand', () => {
     expect(deps.sendMessage).toHaveBeenCalledWith(
       expect.stringContaining('failed'),
     );
+  });
+
+  it('handles /reset by forwarding to container', async () => {
+    const deps = makeDeps();
+    const result = await handleSessionCommand({
+      missedMessages: [makeMsg('/reset')],
+      isMainGroup: true,
+      groupName: 'test',
+      triggerPattern: trigger,
+      timezone: 'UTC',
+      deps,
+    });
+    expect(result).toEqual({ handled: true, success: true });
+    expect(deps.runAgent).toHaveBeenCalledWith('/reset', expect.any(Function));
+    expect(deps.advanceCursor).toHaveBeenCalledWith('100');
+  });
+
+  it('handles /stop without running agent', async () => {
+    const deps = makeDeps();
+    const result = await handleSessionCommand({
+      missedMessages: [makeMsg('/stop')],
+      isMainGroup: true,
+      groupName: 'test',
+      triggerPattern: trigger,
+      timezone: 'UTC',
+      deps,
+    });
+    expect(result).toEqual({ handled: true, success: true });
+    expect(deps.runAgent).not.toHaveBeenCalled();
+    expect(deps.closeStdin).toHaveBeenCalled();
+    expect(deps.advanceCursor).toHaveBeenCalledWith('100');
+    expect(deps.sendMessage).toHaveBeenCalledWith('Container stopped.');
+  });
+
+  it('handles /resetnow without running agent', async () => {
+    const deps = makeDeps();
+    const result = await handleSessionCommand({
+      missedMessages: [makeMsg('/resetnow')],
+      isMainGroup: true,
+      groupName: 'test',
+      triggerPattern: trigger,
+      timezone: 'UTC',
+      deps,
+    });
+    expect(result).toEqual({ handled: true, success: true });
+    expect(deps.runAgent).not.toHaveBeenCalled();
+    expect(deps.closeStdin).toHaveBeenCalled();
+    expect(deps.clearSession).toHaveBeenCalled();
+    expect(deps.advanceCursor).toHaveBeenCalledWith('100');
+    expect(deps.sendMessage).toHaveBeenCalledWith('Session reset.');
+  });
+
+  it('denies /stop from untrusted sender in non-main group', async () => {
+    const deps = makeDeps();
+    const result = await handleSessionCommand({
+      missedMessages: [makeMsg('/stop', { is_from_me: false })],
+      isMainGroup: false,
+      groupName: 'test',
+      triggerPattern: trigger,
+      timezone: 'UTC',
+      deps,
+    });
+    expect(result).toEqual({ handled: true, success: true });
+    expect(deps.sendMessage).toHaveBeenCalledWith(
+      'Session commands require admin access.',
+    );
+    expect(deps.closeStdin).not.toHaveBeenCalled();
   });
 
   it('returns success:false on pre-compact failure with no output', async () => {

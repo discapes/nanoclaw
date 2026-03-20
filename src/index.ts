@@ -197,6 +197,10 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       runAgent: (prompt, onOutput) =>
         runAgent(group, prompt, chatJid, onOutput),
       closeStdin: () => queue.closeStdin(chatJid),
+      clearSession: () => {
+        delete sessions[group.folder];
+        deleteSession(group.folder);
+      },
       advanceCursor: (ts) => {
         lastAgentTimestamp[chatJid] = ts;
         saveState();

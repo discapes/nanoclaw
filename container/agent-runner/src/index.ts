@@ -14,7 +14,7 @@
  *   Final marker after loop ends signals completion.
  */
 
-const RUNNER_VERSION = '1.7.0';
+const RUNNER_VERSION = '1.8.0';
 
 import fs from 'fs';
 import path from 'path';
@@ -645,10 +645,18 @@ async function main(): Promise<void> {
 
   // Only known session slash commands are handled here. This prevents
   // accidental interception of user prompts that happen to start with '/'.
-  const KNOWN_SESSION_COMMANDS = new Set(['/compact']);
   const trimmedPrompt = prompt.trim();
-  if (KNOWN_SESSION_COMMANDS.has(trimmedPrompt)) {
+  if (trimmedPrompt === '/compact') {
     await handleSlashCommand(trimmedPrompt, sessionId, sdkEnv);
+    return;
+  }
+  if (trimmedPrompt === '/reset') {
+    if (sessionId) await handleSlashCommand('/compact', sessionId, sdkEnv);
+    writeOutput({
+      status: 'success',
+      result: 'Session reset.',
+      newSessionId: '',
+    });
     return;
   }
 
