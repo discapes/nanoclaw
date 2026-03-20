@@ -1,30 +1,31 @@
 import type { NewMessage } from './types.ts';
 import { logger } from './logger.ts';
 
-/**
- * Extract a session slash command from a message, stripping the trigger prefix if present.
- * Returns the slash command (e.g., '/compact') or null if not a session command.
- */
 export function extractSessionCommand(
   content: string,
   triggerPattern: RegExp,
 ): string | null {
   let text = content.trim();
   text = text.replace(triggerPattern, '').trim();
-  if (
-    text === '/compact' ||
-    text === '/reset' ||
-    text === '/resetnow' ||
-    text === '/stop'
-  )
-    return text;
+  if (text === '/compact' || text === '/stop') return text;
+  if (text === '/seshname' || text.startsWith('/seshname ')) return '/seshname';
+  if (text === '/sesh' || text.startsWith('/sesh ')) return '/sesh';
   return null;
 }
 
-/**
- * Check if a session command sender is authorized.
- * Allowed: main group (any sender), or trusted/admin sender (is_from_me) in any group.
- */
+function getCommandArgs(
+  content: string,
+  triggerPattern: RegExp,
+  command: string,
+): string {
+  return content
+    .trim()
+    .replace(triggerPattern, '')
+    .trim()
+    .slice(command.length)
+    .trim();
+}
+
 export function isSessionCommandAllowed(
   isMainGroup: boolean,
   isFromMe: boolean,
@@ -32,13 +33,17 @@ export function isSessionCommandAllowed(
   return isMainGroup || isFromMe;
 }
 
-/** Minimal agent result interface — matches the subset of ContainerOutput used here. */
 export interface AgentResult {
   status: 'success' | 'error';
   result?: string | object | null;
 }
 
-/** Dependencies injected by the orchestrator. */
+export interface SessionHistoryEntry {
+  session_id: string;
+  name: string | null;
+  created_at: string;
+}
+
 export interface SessionCommandDeps {
   sendMessage: (text: string) => Promise<void>;
   setTyping: (typing: boolean) => Promise<void>;
@@ -47,11 +52,37 @@ export interface SessionCommandDeps {
     onOutput: (result: AgentResult) => Promise<void>,
   ) => Promise<'success' | 'error'>;
   closeStdin: () => void;
-  clearSession: () => void;
+  getActiveSession: () => string | undefined;
+  setActiveSession: (sessionId: string | undefined) => void;
   advanceCursor: (timestamp: string) => void;
   formatMessages: (msgs: NewMessage[], timezone: string) => string;
-  /** Whether the denied sender would normally be allowed to interact (for denial messages). */
   canSenderInteract: (msg: NewMessage) => boolean;
+  getSessionHistory: () => SessionHistoryEntry[];
+  findSession: (
+    idOrName: string,
+  ) => { session_id: string; name: string | null } | undefined;
+  isNameTaken: (name: string) => boolean;
+  getSessionName: (sessionId: string) => string | null;
+  setSessionName: (sessionId: string, name: string) => void;
+}
+
+export function formatSessionLabel(
+  sessionId: string,
+  name?: string | null,
+): string {
+  const short = sessionId.slice(0, 8);
+  return name ? `"${name}" (${short})` : short;
+}
+
+export function formatSessionChange(
+  oldId: string | undefined,
+  newId: string | undefined,
+  oldName?: string | null,
+  newName?: string | null,
+): string {
+  const oldLabel = oldId ? formatSessionLabel(oldId, oldName) : 'none';
+  const newLabel = newId ? formatSessionLabel(newId, newName) : 'none';
+  return `Session: ${oldLabel} → ${newLabel}`;
 }
 
 function resultToText(result: string | object | null | undefined): string {
@@ -60,12 +91,6 @@ function resultToText(result: string | object | null | undefined): string {
   return raw.replace(/<internal>[\s\S]*?<\/internal>/g, '').trim();
 }
 
-/**
- * Handle session command interception in processGroupMessages.
- * Scans messages for a session command, handles auth + execution.
- * Returns { handled: true, success } if a command was found; { handled: false } otherwise.
- * success=false means the caller should retry (cursor was not advanced).
- */
 export async function handleSessionCommand(opts: {
   missedMessages: NewMessage[];
   isMainGroup: boolean;
@@ -93,10 +118,6 @@ export async function handleSessionCommand(opts: {
   if (!command || !cmdMsg) return { handled: false };
 
   if (!isSessionCommandAllowed(isMainGroup, cmdMsg.is_from_me === true)) {
-    // DENIED: send denial if the sender would normally be allowed to interact,
-    // then silently consume the command by advancing the cursor past it.
-    // Trade-off: other messages in the same batch are also consumed (cursor is
-    // a high-water mark). Acceptable for this narrow edge case.
     if (deps.canSenderInteract(cmdMsg)) {
       await deps.sendMessage('Session commands require admin access.');
     }
@@ -104,28 +125,93 @@ export async function handleSessionCommand(opts: {
     return { handled: true, success: true };
   }
 
-  // AUTHORIZED
   logger.info({ group: groupName, command }, 'Session command');
 
-  // /stop and /resetnow are host-only — no container needed.
+  // --- Host-only commands ---
+
   if (command === '/stop') {
     deps.closeStdin();
     deps.advanceCursor(cmdMsg.timestamp);
     await deps.sendMessage('Container stopped.');
     return { handled: true, success: true };
   }
-  if (command === '/resetnow') {
-    deps.closeStdin();
-    deps.clearSession();
+
+  if (command === '/sesh') {
+    const args = getCommandArgs(cmdMsg.content, triggerPattern, '/sesh');
     deps.advanceCursor(cmdMsg.timestamp);
-    await deps.sendMessage('Session reset.');
+
+    if (!args) {
+      const history = deps.getSessionHistory();
+      if (history.length === 0) {
+        await deps.sendMessage('No sessions.');
+        return { handled: true, success: true };
+      }
+      const activeId = deps.getActiveSession();
+      const lines = history.map((s) => {
+        const marker = s.session_id === activeId ? ' →' : '  ';
+        const label = formatSessionLabel(s.session_id, s.name);
+        return `${marker} ${label}`;
+      });
+      await deps.sendMessage(lines.join('\n'));
+      return { handled: true, success: true };
+    }
+
+    // /sesh new — start a fresh session
+    if (args === 'new') {
+      const oldId = deps.getActiveSession();
+      const oldName = oldId ? deps.getSessionName(oldId) : null;
+      deps.closeStdin();
+      deps.setActiveSession(undefined);
+      await deps.sendMessage(formatSessionChange(oldId, undefined, oldName));
+      return { handled: true, success: true };
+    }
+
+    // /sesh <id-or-name> — switch to existing session
+    const target = deps.findSession(args);
+    if (!target) {
+      await deps.sendMessage(`Session not found: ${args}`);
+      return { handled: true, success: true };
+    }
+    const oldId = deps.getActiveSession();
+    const oldName = oldId ? deps.getSessionName(oldId) : null;
+    deps.closeStdin();
+    deps.setActiveSession(target.session_id);
+    await deps.sendMessage(
+      formatSessionChange(oldId, target.session_id, oldName, target.name),
+    );
     return { handled: true, success: true };
   }
+
+  if (command === '/seshname') {
+    const args = getCommandArgs(cmdMsg.content, triggerPattern, '/seshname');
+    deps.advanceCursor(cmdMsg.timestamp);
+    const activeId = deps.getActiveSession();
+
+    if (!activeId) {
+      await deps.sendMessage('No active session.');
+      return { handled: true, success: true };
+    }
+
+    if (!args) {
+      const name = deps.getSessionName(activeId);
+      await deps.sendMessage(formatSessionLabel(activeId, name));
+      return { handled: true, success: true };
+    }
+
+    if (deps.isNameTaken(args)) {
+      await deps.sendMessage(`Name "${args}" is already in use.`);
+      return { handled: true, success: true };
+    }
+    deps.setSessionName(activeId, args);
+    await deps.sendMessage(`Session ${activeId.slice(0, 8)} named "${args}"`);
+    return { handled: true, success: true };
+  }
+
+  // --- Container command: /compact ---
 
   const cmdIndex = missedMessages.indexOf(cmdMsg);
   const preCompactMsgs = missedMessages.slice(0, cmdIndex);
 
-  // Send pre-compact messages to the agent so they're in the session context.
   if (preCompactMsgs.length > 0) {
     const prePrompt = deps.formatMessages(preCompactMsgs, timezone);
     let hadPreError = false;
@@ -138,8 +224,6 @@ export async function handleSessionCommand(opts: {
         await deps.sendMessage(text);
         preOutputSent = true;
       }
-      // Close stdin on session-update marker — emitted after query completes,
-      // so all results (including multi-result runs) are already written.
       if (result.status === 'success' && result.result === null) {
         deps.closeStdin();
       }
@@ -154,8 +238,6 @@ export async function handleSessionCommand(opts: {
         `Failed to process messages before ${command}. Try again.`,
       );
       if (preOutputSent) {
-        // Output was already sent — don't retry or it will duplicate.
-        // Advance cursor past pre-compact messages, leave command pending.
         deps.advanceCursor(preCompactMsgs[preCompactMsgs.length - 1].timestamp);
         return { handled: true, success: true };
       }
@@ -163,7 +245,6 @@ export async function handleSessionCommand(opts: {
     }
   }
 
-  // Forward the literal slash command as the prompt (no XML formatting)
   await deps.setTyping(true);
 
   let hadCmdError = false;
@@ -173,7 +254,6 @@ export async function handleSessionCommand(opts: {
     if (text) await deps.sendMessage(text);
   });
 
-  // Advance cursor to the command — messages AFTER it remain pending for next poll.
   deps.advanceCursor(cmdMsg.timestamp);
   await deps.setTyping(false);
 

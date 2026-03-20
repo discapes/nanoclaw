@@ -12,7 +12,8 @@ Single Node.js process with skill-based channel system. Channels (WhatsApp, Tele
 | ----------------------------------- | ---------------------------------------------------------- |
 | `src/index.ts`                      | Orchestrator: state, message loop, agent invocation        |
 | `src/channels/registry.ts`          | Channel registry (self-registration at startup)            |
-| `src/ipc.ts`                        | IPC watcher and task processing                            |
+| `src/ipc-server.ts`                 | MCP-over-HTTP server for container→host communication      |
+| `src/session-commands.ts`           | Session slash command parsing, auth, and execution          |
 | `src/router.ts`                     | Message formatting and outbound routing                    |
 | `src/config.ts`                     | Trigger pattern, paths, intervals                          |
 | `src/container-runner.ts`           | Spawns agent containers with mounts                        |
@@ -75,9 +76,45 @@ ALWAYS When you make changes, REMEMBER TO BUMP the appropriate version.
 
 ## Agent Runner
 
-The agent runner (`container/agent-runner/src/`) runs inside each container. It calls the Claude Agent SDK's `query()` with a `MessageStream` (async iterable) as the prompt. The SDK keeps the query open for the container's entire lifetime — all follow-up messages are piped via `stream.push()`, not as separate `query()` calls. The query only ends when `stream.end()` is called (via `_close` or `_reset` sentinel). The outer `while(true)` loop in `main()` is a fallback for when the SDK ends the query unexpectedly.
+The agent runner (`container/agent-runner/src/`) runs inside each container. It uses a query loop: call `query()` with a `MessageStream` → SDK runs until the stream ends → wait for next IPC message → start a new `query()` resuming the same session. Follow-up messages arriving during a query are piped via `stream.push()`. The stream ends when the SDK finishes its turn or a `_close` sentinel is detected.
+
+The `agent-control` MCP server is mounted but has no tools (placeholder for future use). All session management is handled host-side via slash commands — see `src/session-commands.ts`.
 
 The agent-runner source is mounted read-only from `container/agent-runner/src/` into all containers. Changes apply to all groups on next container restart.
+
+## Sessions
+
+Each group has an **active session** (tracked in the `sessions` DB table) that the SDK resumes on each container start. All sessions ever created are stored in `session_history` so users can switch between them.
+
+**How sessions work:**
+- The SDK creates a session ID when a container runs its first query. The host stores it in both `sessions` (active pointer) and `session_history` (permanent record).
+- Switching sessions (`/sesh`) updates the active pointer. The next container start resumes the selected session.
+- Starting a new session (`/sesh new`) clears the active pointer. The next message creates a fresh session.
+- Sessions can be named (`/seshname`) for easy reference. Names must be unique within a group.
+- Compacting (`/compact`) preserves the same session but replaces conversation history with a summary. An archive of the full conversation is saved to disk.
+
+**Storage:**
+- `sessions` table: one row per group, points to the active session ID.
+- `session_history` table: all sessions per group, with optional name and creation timestamp.
+- On first run after migration, existing active sessions are seeded into `session_history`.
+
+**Notifications:** Session changes are reported to the channel. When `/sesh new` clears the session, the old session ID is printed. When the next message creates the new session, its ID is printed too. `/sesh <target>` prints both old and new.
+
+## Slash Commands
+
+Slash commands are sent by users in the chat channel (e.g., Telegram). They can optionally be prefixed with the bot's trigger (e.g., `@BotName /compact`). All require admin access (main group sender or `is_from_me`).
+
+| Command | Description |
+|---------|-------------|
+| `/compact` | Compact conversation history into a summary. Session continues with summary as context. Messages before the command in the same batch are processed first. |
+| `/stop` | Stop the active container. Session is preserved unchanged. |
+| `/sesh` | List all sessions for this group with IDs, names, and an arrow marking the active one. |
+| `/sesh new` | Start a fresh session. Closes the active container and clears the session. The old session remains in history. |
+| `/sesh <id-or-name>` | Switch to an existing session by exact session ID or name. Closes the active container. |
+| `/seshname` | Show the current session's ID and name. |
+| `/seshname <name>` | Name the current session. Rejects duplicate names within the group. |
+
+**Implementation:** `extractSessionCommand` in `src/session-commands.ts` parses commands. `handleSessionCommand` handles auth and execution. `/stop`, `/sesh`, and `/seshname` are host-only (no container spawned). `/compact` spawns a container to run the SDK's built-in `/compact` command.
 
 ## Telegram MarkdownV2
 

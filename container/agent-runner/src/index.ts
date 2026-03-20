@@ -14,15 +14,11 @@
  *   Final marker after loop ends signals completion.
  */
 
-const RUNNER_VERSION = '1.8.0';
+const RUNNER_VERSION = '1.9.0';
 
 import fs from 'fs';
 import path from 'path';
-import {
-  query,
-  createSdkMcpServer,
-  tool,
-} from '@anthropic-ai/claude-agent-sdk';
+import { query, createSdkMcpServer } from '@anthropic-ai/claude-agent-sdk';
 import { createPreCompactHook } from './archive.ts';
 import {
   MessageStream,
@@ -113,8 +109,6 @@ const TOOL_EMOJI: Record<string, string> = {
   mcp__nanoclaw__resume_task: '\\[⏰▶\\]',
   mcp__nanoclaw__cancel_task: '\\[⏰❌\\]',
   mcp__nanoclaw__update_task: '\\[⏰✏️\\]',
-  'mcp__agent-control__stop_container': '🛑',
-  'mcp__agent-control__reset_session': '🔄',
   Skill: '🧩',
 };
 
@@ -131,7 +125,6 @@ async function runQuery(
   sdkEnv: Record<string, string | undefined>,
   controlServer: ReturnType<typeof createSdkMcpServer>,
   resumeAt?: string,
-  registerStreamEnder?: (fn: () => void) => void,
 ): Promise<{
   newSessionId?: string;
   lastAssistantUuid?: string;
@@ -143,7 +136,6 @@ async function runQuery(
   let resultCount = 0;
 
   const stream = new MessageStream();
-  registerStreamEnder?.(() => stream.end());
   const logUser = (text: string) => {
     messageCount++;
     log(
@@ -399,43 +391,8 @@ async function runQuery(
   return { newSessionId, lastAssistantUuid, closedDuringQuery };
 }
 
-function createControlServer(
-  onReset: () => void,
-): ReturnType<typeof createSdkMcpServer> {
-  return createSdkMcpServer({
-    name: 'agent-control',
-    tools: [
-      tool(
-        'reset_session',
-        'Start a fresh conversation session. The next message will begin a new session with no prior history.',
-        {},
-        async () => {
-          onReset();
-          return {
-            content: [
-              {
-                type: 'text' as const,
-                text: 'Session will reset after this turn.',
-              },
-            ],
-          };
-        },
-      ),
-      tool(
-        'stop_container',
-        'Shut down this container gracefully. Use when the user wants to reload or restart.',
-        {},
-        async () => {
-          fs.writeFileSync(IPC_INPUT_CLOSE_SENTINEL, '');
-          return {
-            content: [
-              { type: 'text' as const, text: 'Container shutting down.' },
-            ],
-          };
-        },
-      ),
-    ],
-  });
+function createControlServer(): ReturnType<typeof createSdkMcpServer> {
+  return createSdkMcpServer({ name: 'agent-control', tools: [] });
 }
 
 async function handleSlashCommand(
@@ -616,14 +573,9 @@ async function main(): Promise<void> {
   const sdkEnv: Record<string, string | undefined> = { ...process.env };
 
   let sessionId = containerInput.sessionId;
-  let resetRequested = false;
-  let endCurrentStream: (() => void) | null = null;
   fs.mkdirSync(IPC_INPUT_DIR, { recursive: true });
 
-  const controlServer = createControlServer(() => {
-    resetRequested = true;
-    setImmediate(() => endCurrentStream?.());
-  });
+  const controlServer = createControlServer();
 
   // Clean up stale close sentinel from previous container run
   try {
@@ -650,15 +602,6 @@ async function main(): Promise<void> {
     await handleSlashCommand(trimmedPrompt, sessionId, sdkEnv);
     return;
   }
-  if (trimmedPrompt === '/reset') {
-    if (sessionId) await handleSlashCommand('/compact', sessionId, sdkEnv);
-    writeOutput({
-      status: 'success',
-      result: 'Session reset.',
-      newSessionId: '',
-    });
-    return;
-  }
 
   // Query loop: run query → wait for IPC message → run new query → repeat
   let resumeAt: string | undefined;
@@ -675,27 +618,13 @@ async function main(): Promise<void> {
         sdkEnv,
         controlServer,
         resumeAt,
-        (fn) => {
-          endCurrentStream = fn;
-        },
       );
-      endCurrentStream = null;
 
-      if (resetRequested) {
-        log('Session reset requested, compacting then clearing session');
-        const compactSessionId = queryResult.newSessionId || sessionId;
-        if (compactSessionId)
-          await handleSlashCommand('/compact', compactSessionId, sdkEnv);
-        sessionId = undefined;
-        resumeAt = undefined;
-        resetRequested = false;
-      } else {
-        if (queryResult.newSessionId) {
-          sessionId = queryResult.newSessionId;
-        }
-        if (queryResult.lastAssistantUuid) {
-          resumeAt = queryResult.lastAssistantUuid;
-        }
+      if (queryResult.newSessionId) {
+        sessionId = queryResult.newSessionId;
+      }
+      if (queryResult.lastAssistantUuid) {
+        resumeAt = queryResult.lastAssistantUuid;
       }
 
       // If _close was consumed during the query, exit immediately.

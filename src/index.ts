@@ -41,6 +41,12 @@ import {
   setRouterState,
   setSession,
   deleteSession,
+  upsertSessionHistory,
+  getSessionHistory,
+  findSessionByIdOrName,
+  getSessionName,
+  setSessionName,
+  isSessionNameTaken,
   storeChatMetadata,
   storeMessage,
 } from './db.ts';
@@ -65,6 +71,7 @@ import {
 } from './sender-allowlist.ts';
 import {
   extractSessionCommand,
+  formatSessionLabel,
   handleSessionCommand,
   isSessionCommandAllowed,
 } from './session-commands.ts';
@@ -197,10 +204,8 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       runAgent: (prompt, onOutput) =>
         runAgent(group, prompt, chatJid, onOutput),
       closeStdin: () => queue.closeStdin(chatJid),
-      clearSession: () => {
-        delete sessions[group.folder];
-        deleteSession(group.folder);
-      },
+      getActiveSession: () => sessions[group.folder],
+      setActiveSession: (id) => updateGroupSession(group.folder, id),
       advanceCursor: (ts) => {
         lastAgentTimestamp[chatJid] = ts;
         saveState();
@@ -217,6 +222,11 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
               isTriggerAllowed(chatJid, msg.sender, loadSenderAllowlist())))
         );
       },
+      getSessionHistory: () => getSessionHistory(group.folder),
+      findSession: (q) => findSessionByIdOrName(group.folder, q),
+      isNameTaken: (name) => isSessionNameTaken(group.folder, name),
+      getSessionName: (id) => getSessionName(group.folder, id),
+      setSessionName: (id, name) => setSessionName(group.folder, id, name),
     },
   });
   if (cmdResult.handled) return cmdResult.success;
@@ -298,12 +308,14 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   if (idleTimer) clearTimeout(idleTimer);
 
   if (output === 'error' || hadError) {
-    // If we already sent output to the user, don't roll back the cursor —
-    // the user got their response and re-processing would send duplicates.
     if (outputSentToUser) {
       logger.warn(
         { group: group.name },
         'Agent error after output was sent, skipping cursor rollback to prevent duplicates',
+      );
+      await channel.sendMessage(
+        chatJid,
+        'Agent encountered an error after partial response.',
       );
       return true;
     }
@@ -314,10 +326,25 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       { group: group.name },
       'Agent error, rolled back message cursor for retry',
     );
+    await channel.sendMessage(chatJid, 'Agent error, retrying...');
     return false;
   }
 
   return true;
+}
+
+function updateGroupSession(
+  groupFolder: string,
+  sessionId: string | undefined,
+): void {
+  if (sessionId) {
+    sessions[groupFolder] = sessionId;
+    setSession(groupFolder, sessionId);
+    upsertSessionHistory(groupFolder, sessionId);
+  } else {
+    delete sessions[groupFolder];
+    deleteSession(groupFolder);
+  }
 }
 
 async function runAgent(
@@ -338,16 +365,23 @@ async function runAgent(
     new Set(Object.keys(registeredGroups)),
   );
 
-  // Wrap onOutput to track session ID from streamed results
+  let notifiedNewSession = false;
   const wrappedOnOutput = onOutput
     ? async (output: ContainerOutput) => {
         if (output.newSessionId !== undefined) {
-          if (output.newSessionId) {
-            sessions[group.folder] = output.newSessionId;
-            setSession(group.folder, output.newSessionId);
-          } else {
-            delete sessions[group.folder];
-            deleteSession(group.folder);
+          const newId = output.newSessionId || undefined;
+          updateGroupSession(group.folder, newId);
+          // Notify when a new session is created (e.g., first message after /sesh new)
+          if (newId && !sessionId && !notifiedNewSession) {
+            notifiedNewSession = true;
+            const channel = findChannel(channels, chatJid);
+            if (channel) {
+              const name = getSessionName(group.folder, newId);
+              await channel.sendMessage(
+                chatJid,
+                `New session: ${formatSessionLabel(newId, name)}`,
+              );
+            }
           }
         }
         await onOutput(output);
@@ -373,8 +407,7 @@ async function runAgent(
     );
 
     if (output.newSessionId) {
-      sessions[group.folder] = output.newSessionId;
-      setSession(group.folder, output.newSessionId);
+      updateGroupSession(group.folder, output.newSessionId);
     }
 
     if (output.status === 'error') {

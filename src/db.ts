@@ -74,6 +74,15 @@ function createSchema(database: Database.Database): void {
       group_folder TEXT PRIMARY KEY,
       session_id TEXT NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS session_history (
+      group_folder TEXT NOT NULL,
+      session_id TEXT NOT NULL,
+      name TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      PRIMARY KEY (group_folder, session_id)
+    );
+    INSERT OR IGNORE INTO session_history (group_folder, session_id)
+      SELECT group_folder, session_id FROM sessions;
     CREATE TABLE IF NOT EXISTS registered_groups (
       jid TEXT PRIMARY KEY,
       name TEXT NOT NULL,
@@ -541,6 +550,73 @@ export function getAllSessions(): Record<string, string> {
     result[row.group_folder] = row.session_id;
   }
   return result;
+}
+
+// --- Session history accessors ---
+
+export function upsertSessionHistory(
+  groupFolder: string,
+  sessionId: string,
+): void {
+  db.prepare(
+    'INSERT OR IGNORE INTO session_history (group_folder, session_id) VALUES (?, ?)',
+  ).run(groupFolder, sessionId);
+}
+
+export interface SessionHistoryRow {
+  session_id: string;
+  name: string | null;
+  created_at: string;
+}
+
+export function getSessionHistory(groupFolder: string): SessionHistoryRow[] {
+  return db
+    .prepare(
+      'SELECT session_id, name, created_at FROM session_history WHERE group_folder = ? ORDER BY created_at DESC',
+    )
+    .all(groupFolder) as SessionHistoryRow[];
+}
+
+export function findSessionByIdOrName(
+  groupFolder: string,
+  query: string,
+): SessionHistoryRow | undefined {
+  return db
+    .prepare(
+      'SELECT session_id, name, created_at FROM session_history WHERE group_folder = ? AND (session_id = ? OR name = ?)',
+    )
+    .get(groupFolder, query, query) as SessionHistoryRow | undefined;
+}
+
+export function getSessionName(
+  groupFolder: string,
+  sessionId: string,
+): string | null {
+  const row = db
+    .prepare(
+      'SELECT name FROM session_history WHERE group_folder = ? AND session_id = ?',
+    )
+    .get(groupFolder, sessionId) as { name: string | null } | undefined;
+  return row?.name ?? null;
+}
+
+export function setSessionName(
+  groupFolder: string,
+  sessionId: string,
+  name: string,
+): void {
+  db.prepare(
+    'UPDATE session_history SET name = ? WHERE group_folder = ? AND session_id = ?',
+  ).run(name, groupFolder, sessionId);
+}
+
+export function isSessionNameTaken(groupFolder: string, name: string): boolean {
+  const row = db
+    .prepare(
+      'SELECT 1 FROM session_history WHERE group_folder = ? AND name = ?',
+    )
+    .get(groupFolder, name);
+  return row !== undefined;
 }
 
 // --- Registered group accessors ---

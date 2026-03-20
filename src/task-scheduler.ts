@@ -203,6 +203,18 @@ async function runTask(
     logger.error({ taskId: task.id, error }, 'Task failed');
   }
 
+  if (error) {
+    try {
+      const label = task.id;
+      await deps.sendMessage(
+        task.chat_jid,
+        `Scheduled task "${label}" failed: ${error}`,
+      );
+    } catch {
+      /* best-effort */
+    }
+  }
+
   const durationMs = Date.now() - startTime;
 
   logTaskRun({
