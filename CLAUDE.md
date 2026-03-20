@@ -78,54 +78,58 @@ ALWAYS When you make changes, REMEMBER TO BUMP the appropriate version.
 
 The agent runner (`container/agent-runner/src/`) runs inside each container. Source is mounted read-only from `container/agent-runner/src/` — changes apply to all groups on next container restart.
 
-The `agent-control` MCP server is mounted but has no tools (placeholder for future use). All session management is handled host-side via slash commands — see `src/session-commands.ts`.
+### Two loops, two ways to deliver messages
 
-### Query and stream architecture
+The agent runner has two nested loops and two ways messages reach the SDK:
 
-The SDK's `query()` function accepts a `prompt` which can be either a string or an async iterable. NanoClaw passes a `MessageStream` (async iterable defined in `container/agent-runner/src/ipc.ts`). This is the key design decision: **the entire multi-turn conversation happens within a single `query()` call**.
+**Outer loop** (`main()` → `while(true)` in `container/agent-runner/src/index.ts`):
+```
+main() → runQuery(prompt) → [query ends] → waitForIpcMessage() → runQuery(nextMessage) → ...
+```
+Each iteration calls `runQuery()` then blocks on `waitForIpcMessage()`. This loop exists as a **fallback** for when the SDK ends its `query()` call (emits a `result` message). In practice, during normal conversation, the SDK almost never ends the query on its own because the prompt is a `MessageStream` (async iterable) that stays open. The outer loop mainly matters for edge cases where the SDK ends the query unexpectedly.
 
-The flow within one `query()` call:
-1. `stream.push(prompt)` sends the first user message
-2. SDK processes the message, calls tools, produces assistant responses
-3. SDK emits a `result` message — but this is NOT the end of the query
-4. SDK pulls the next message from the async iterable
-5. No message is available yet → the iterator blocks (`await new Promise`)
-6. User sends a new message → host writes it to IPC → agent runner's `pollIpcDuringQuery` picks it up → `stream.push(text)`
-7. The iterator yields the message → SDK processes it → back to step 3
+**Inner loop** (`runQuery()` → `for await...of query()`):
+```
+runQuery() → query({ prompt: stream }) → [SDK processes stream, emits messages] → ...
+```
+This is where the actual conversation happens. The SDK's `query()` takes a `MessageStream` as the prompt. As long as the stream stays open, the SDK keeps the query alive — it processes a user message, responds, then waits for the next `stream.push()`.
 
-The `for await (const message of query(...))` loop in `runQuery()` receives ALL SDK events (system, assistant, user, result, rate_limit) for ALL turns. The `result` event marks the end of one turn, not the end of the query.
+**How follow-up messages arrive during a query:**
+`pollIpcDuringQuery()` runs on a 500ms timer inside `runQuery()`. It checks the IPC input directory for new message files (written by the host via `queue.sendMessage()`). Each message found is pushed onto the stream via `stream.push()`, which the SDK picks up as the next user turn — all within the same `query()` call.
 
-**The query only ends when:**
-- `stream.end()` is called → iterator returns `done: true` → SDK finishes → `for await` loop exits
-- The SDK encounters an internal error and terminates the query
+**What this means:** A typical multi-turn conversation is a single `query()` call with many `stream.push()` calls. The log pattern `#N user: ... → #N+1 assistant: ... → #N+2 result: ... → #N+3 user: ...` all happens inside one `for await...of query()` loop. The `result` message between user turns is the SDK signaling it finished its turn, but because the stream is still open, the SDK immediately waits for the next message rather than ending the query.
 
-**`stream.end()` is only called when** the IPC poller detects the `_close` sentinel file (`/workspace/ipc/input/_close`). The host writes this file via `closeStdin()` in `group-queue.ts`.
+### When does `query()` end?
 
-### Outer loop (fallback)
+The `for await...of query()` loop exits when:
 
-`main()` has a `while(true)` loop around `runQuery()`. In normal operation, this loop runs exactly once — the single `query()` call spans the container's entire lifetime. The loop exists as a fallback for when the SDK unexpectedly terminates the query (e.g., internal error). When that happens:
-1. `runQuery()` returns with `closedDuringQuery: false`
-2. `main()` emits a session-update marker to the host
-3. `main()` calls `waitForIpcMessage()` — blocks until the next IPC message or `_close`
-4. If a message arrives, it becomes the prompt for a new `query()` with `resume: sessionId` and `resumeSessionAt: lastAssistantUuid` to continue from where the SDK left off
-5. If `_close` arrives, the container exits
+1. **`stream.end()` is called** — The `MessageStream` signals no more messages. This happens when `pollIpcDuringQuery` detects the `_close` sentinel file (written by the host's `closeStdin()`). Sets `closedDuringQuery = true`.
+2. **The SDK decides to end** — Rare in practice since the stream stays open. If it happens, the outer loop catches it: `runQuery()` returns, the outer loop emits a session-update marker, then `waitForIpcMessage()` blocks until the next message or `_close`.
 
-### Stop conditions summary
+### When does the container exit?
 
-| Trigger | What happens |
-|---------|-------------|
-| `_close` sentinel during query | `stream.end()` → query finishes → `closedDuringQuery: true` → container exits |
-| `_close` sentinel between queries | `waitForIpcMessage()` returns null → container exits |
-| SDK internal error in query | `for await` loop exits → outer loop catches it → waits for next message or `_close` |
-| Unhandled exception | `catch` in `main()` → `writeOutput(error)` → `process.exit(1)` |
+The outer loop breaks when:
+- `closedDuringQuery` is true (close sentinel consumed during query) — immediate exit
+- `waitForIpcMessage()` returns null (close sentinel found between queries) — immediate exit
 
-### Why the container must be stopped for certain commands
+The container process then exits naturally after `main()` returns.
 
-Since the entire conversation is one `query()` call bound to a specific session:
-- **`/compact`** needs a fresh `query()` with a string prompt (not `MessageStream`) for the SDK to recognize it as a built-in slash command. The current query/stream can't be repurposed.
-- **`/sesh new` and `/sesh <id>`** change the session. The running container's `query()` is bound to the old session via `resume: sessionId`. A new container must start with the new (or empty) session ID.
-- **`/sesh` (list) and `/seshname`** are read-only — they don't need to touch the container at all.
-- **`/stop`** explicitly stops the container (that's its purpose).
+### Host-side message delivery
+
+The host (`src/index.ts` message loop) delivers messages in two ways:
+
+1. **IPC pipe** (`queue.sendMessage()`) — If a container is already active for the group, the formatted message is written as a JSON file to the IPC directory. The container's poller picks it up and pushes it onto the stream. Fast, no container restart.
+2. **New container** (`queue.enqueueMessageCheck()`) — If no container is active, a new one is spawned via `processGroupMessages` → `runAgent()`. The message is passed as the initial prompt via stdin.
+
+### Implications for slash commands
+
+Since the entire conversation lives inside one `query()` call, **ending the query is not the same as stopping the container**. Writing `_close` does both: it ends the stream (which ends the query) and causes the outer loop to exit. There is currently no mechanism to end just the current query without also stopping the container.
+
+For `/compact`: requires a fresh `query()` with a string prompt (not a `MessageStream`) so the SDK recognizes it as a slash command. This means the active container must be stopped, and a new one spawned with `/compact` as the prompt. The compact container exits after the command completes.
+
+For `/sesh new` and `/sesh <id>`: the active container must be stopped because it's running on the old session. The next message spawns a new container with the correct session ID.
+
+For `/sesh` (list) and `/seshname`: these are purely host-side lookups that don't touch the container at all.
 
 ## Sessions
 
