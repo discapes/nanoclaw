@@ -476,10 +476,23 @@ async function startMessageLoop(): Promise<void> {
           );
 
           if (loopCmdMsg) {
-            // Only close active container if the sender is authorized — otherwise an
-            // untrusted user could kill in-flight work by sending /compact (DoS).
-            // closeStdin no-ops internally when no container is active.
+            const loopCmd = extractSessionCommand(
+              loopCmdMsg.content,
+              TRIGGER_PATTERN,
+            );
+            // Only close the active container for commands that need a fresh
+            // container (/compact) or change the session (/sesh with args).
+            // Read-only commands (/sesh list, /seshname, /stop) don't need to
+            // kill in-flight work. Auth check prevents DoS from untrusted senders.
+            const needsClose =
+              loopCmd === '/compact' ||
+              (loopCmd === '/sesh' &&
+                loopCmdMsg.content
+                  .trim()
+                  .replace(TRIGGER_PATTERN, '')
+                  .trim() !== '/sesh');
             if (
+              needsClose &&
               isSessionCommandAllowed(
                 isMainGroup,
                 loopCmdMsg.is_from_me === true,
@@ -487,9 +500,6 @@ async function startMessageLoop(): Promise<void> {
             ) {
               queue.closeStdin(chatJid);
             }
-            // Enqueue so processGroupMessages handles auth + cursor advancement.
-            // Don't pipe via IPC — slash commands need a fresh container with
-            // string prompt (not MessageStream) for SDK recognition.
             queue.enqueueMessageCheck(chatJid);
             continue;
           }
