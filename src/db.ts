@@ -581,11 +581,28 @@ export function findSessionByIdOrName(
   groupFolder: string,
   query: string,
 ): SessionHistoryRow | undefined {
-  return db
+  // Exact name match first, then exact ID, then ID prefix
+  const byName = db
     .prepare(
-      'SELECT session_id, name, created_at FROM session_history WHERE group_folder = ? AND (session_id = ? OR name = ?)',
+      'SELECT session_id, name, created_at FROM session_history WHERE group_folder = ? AND name = ?',
     )
-    .get(groupFolder, query, query) as SessionHistoryRow | undefined;
+    .get(groupFolder, query) as SessionHistoryRow | undefined;
+  if (byName) return byName;
+
+  const byId = db
+    .prepare(
+      'SELECT session_id, name, created_at FROM session_history WHERE group_folder = ? AND session_id = ?',
+    )
+    .get(groupFolder, query) as SessionHistoryRow | undefined;
+  if (byId) return byId;
+
+  const byPrefix = db
+    .prepare(
+      "SELECT session_id, name, created_at FROM session_history WHERE group_folder = ? AND session_id LIKE ? || '%'",
+    )
+    .all(groupFolder, query) as SessionHistoryRow[];
+  if (byPrefix.length === 1) return byPrefix[0];
+  return undefined;
 }
 
 export function getSessionName(
