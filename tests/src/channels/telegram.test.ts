@@ -8,7 +8,7 @@ vi.mock('../../../src/channels/registry.ts', () => ({
 }));
 
 // Mock env reader (used by the factory, not needed in unit tests)
-vi.mock('../../../src/env.ts', () => ({ readEnvFile: vi.fn(() => ({})) }));
+vi.mock('../../../src/env.ts', () => ({ readEnvByPrefix: vi.fn(() => ({})) }));
 
 // Mock config
 vi.mock('../../../src/config.ts', () => ({

@@ -5,7 +5,7 @@ import path from 'path';
 import { Api, Bot, InputFile } from 'grammy';
 
 import { ASSISTANT_NAME, GROUPS_DIR, TRIGGER_PATTERN } from '../config.ts';
-import { readEnvFile } from '../env.ts';
+import { readEnvByPrefix } from '../env.ts';
 import { logger } from '../logger.ts';
 import { transcribe } from '../transcribe.ts';
 import { registerChannel, type ChannelOpts } from './registry.ts';
@@ -103,15 +103,30 @@ function replyPrefix(msg: any): string {
 }
 
 export class TelegramChannel implements Channel {
-  name = 'telegram';
+  name: string;
 
   private bot: Bot | null = null;
   private opts: TelegramChannelOpts;
   private botToken: string;
+  private jidPrefix: string;
 
-  constructor(botToken: string, opts: TelegramChannelOpts) {
+  constructor(
+    botToken: string,
+    opts: TelegramChannelOpts,
+    instanceId?: string,
+  ) {
     this.botToken = botToken;
     this.opts = opts;
+    this.name = instanceId ? `telegram:${instanceId}` : 'telegram';
+    this.jidPrefix = instanceId ? `tg.${instanceId}:` : 'tg:';
+  }
+
+  private chatJid(chatId: number | string): string {
+    return `${this.jidPrefix}${chatId}`;
+  }
+
+  private numericId(jid: string): string {
+    return jid.slice(this.jidPrefix.length);
   }
 
   async connect(): Promise<void> {
@@ -131,7 +146,7 @@ export class TelegramChannel implements Channel {
           : (ctx.chat as any).title || 'Unknown';
 
       ctx.reply(
-        `Chat ID: \`tg:${chatId}\`\nName: ${chatName}\nType: ${chatType}`,
+        `Chat ID: \`${this.jidPrefix}${chatId}\`\nName: ${chatName}\nType: ${chatType}`,
         { parse_mode: 'MarkdownV2' },
       );
     });
@@ -151,7 +166,7 @@ export class TelegramChannel implements Channel {
         if (TELEGRAM_BOT_COMMANDS.has(cmd)) return;
       }
 
-      const chatJid = `tg:${ctx.chat.id}`;
+      const chatJid = `${this.jidPrefix}${ctx.chat.id}`;
       let content =
         replyPrefix(ctx.message.reply_to_message) + ctx.message.text;
       const timestamp = new Date(ctx.message.date * 1000).toISOString();
@@ -196,7 +211,7 @@ export class TelegramChannel implements Channel {
         chatJid,
         timestamp,
         chatName,
-        'telegram',
+        this.name,
         isGroup,
       );
 
@@ -229,7 +244,7 @@ export class TelegramChannel implements Channel {
 
     // Handle non-text messages with placeholders so the agent knows something was sent
     const storeNonText = (ctx: any, placeholder: string) => {
-      const chatJid = `tg:${ctx.chat.id}`;
+      const chatJid = `${this.jidPrefix}${ctx.chat.id}`;
       const group = this.opts.registeredGroups()[chatJid];
       if (!group) return;
 
@@ -248,7 +263,7 @@ export class TelegramChannel implements Channel {
         chatJid,
         timestamp,
         undefined,
-        'telegram',
+        this.name,
         isGroup,
       );
       this.opts.onMessage(chatJid, {
@@ -267,7 +282,7 @@ export class TelegramChannel implements Channel {
       label: string,
       filename: string,
     ) => {
-      const chatJid = `tg:${ctx.chat.id}`;
+      const chatJid = `${this.jidPrefix}${ctx.chat.id}`;
       const group = this.opts.registeredGroups()[chatJid];
       if (!group) return;
 
@@ -297,7 +312,7 @@ export class TelegramChannel implements Channel {
       return storeAttachment(ctx, 'Video', filename);
     });
     this.bot.on('message:voice', async (ctx) => {
-      const chatJid = `tg:${ctx.chat.id}`;
+      const chatJid = `${this.jidPrefix}${ctx.chat.id}`;
       const group = this.opts.registeredGroups()[chatJid];
       if (!group) return;
 
@@ -332,7 +347,7 @@ export class TelegramChannel implements Channel {
         chatJid,
         timestamp,
         undefined,
-        'telegram',
+        this.name,
         isGroup,
       );
       this.opts.onMessage(chatJid, {
@@ -390,7 +405,7 @@ export class TelegramChannel implements Channel {
       return;
     }
 
-    const numericId = jid.replace(/^tg:/, '');
+    const numericId = this.numericId(jid);
 
     // Telegram has a 4096 character limit per message — split if needed
     const MAX_LENGTH = 4096;
@@ -418,7 +433,7 @@ export class TelegramChannel implements Channel {
       return;
     }
 
-    const numericId = jid.replace(/^tg:/, '');
+    const numericId = this.numericId(jid);
     const file = new InputFile(filePath);
     const ext = path.extname(filePath).toLowerCase();
     const imageExts = new Set(['.jpg', '.jpeg', '.png', '.gif', '.webp']);
@@ -442,7 +457,7 @@ export class TelegramChannel implements Channel {
   }
 
   ownsJid(jid: string): boolean {
-    return jid.startsWith('tg:');
+    return jid.startsWith(this.jidPrefix);
   }
 
   async disconnect(): Promise<void> {
@@ -456,7 +471,7 @@ export class TelegramChannel implements Channel {
   async setTyping(jid: string, isTyping: boolean): Promise<void> {
     if (!this.bot || !isTyping) return;
     try {
-      const numericId = jid.replace(/^tg:/, '');
+      const numericId = this.numericId(jid);
       await this.bot.api.sendChatAction(numericId, 'typing');
     } catch (err) {
       logger.debug({ jid, err }, 'Failed to send Telegram typing indicator');
@@ -464,13 +479,20 @@ export class TelegramChannel implements Channel {
   }
 }
 
-registerChannel('telegram', (opts: ChannelOpts) => {
-  const envVars = readEnvFile(['TELEGRAM_BOT_TOKEN']);
-  const token =
-    process.env.TELEGRAM_BOT_TOKEN || envVars.TELEGRAM_BOT_TOKEN || '';
-  if (!token) {
-    logger.warn('Telegram: TELEGRAM_BOT_TOKEN not set');
-    return null;
+const TOKEN_PREFIX = 'TELEGRAM_BOT_TOKEN';
+const tokens = readEnvByPrefix(TOKEN_PREFIX);
+
+if (Object.keys(tokens).length === 0) {
+  logger.warn('Telegram: no TELEGRAM_BOT_TOKEN* env vars set');
+} else {
+  for (const [key, token] of Object.entries(tokens)) {
+    const suffix = key.slice(TOKEN_PREFIX.length);
+    if (suffix && !suffix.startsWith('_')) continue;
+    const instanceId = suffix ? suffix.slice(1).toLowerCase() : undefined;
+    const channelName = instanceId ? `telegram:${instanceId}` : 'telegram';
+    registerChannel(
+      channelName,
+      (opts: ChannelOpts) => new TelegramChannel(token, opts, instanceId),
+    );
   }
-  return new TelegramChannel(token, opts);
-});
+}
