@@ -11,6 +11,8 @@
  *   Each result is wrapped in OUTPUT_START_MARKER / OUTPUT_END_MARKER pairs.
  */
 
+process.env.ANTHROPIC_BASE_URL = 'http://host.docker.internal:8081';
+
 const RUNNER_VERSION = '2.0.0';
 
 import fs from 'fs';
@@ -163,13 +165,6 @@ async function runQuery(
   };
   setTimeout(pollIpc, IPC_POLL_MS);
 
-  // Load global CLAUDE.md
-  const globalClaudeMdPath = '/workspace/global/CLAUDE.md';
-  let globalClaudeMd: string | undefined;
-  if (!containerInput.isMain && fs.existsSync(globalClaudeMdPath)) {
-    globalClaudeMd = fs.readFileSync(globalClaudeMdPath, 'utf-8');
-  }
-
   // Discover extra directories
   const extraDirs: string[] = [];
   const extraBase = '/workspace/extra';
@@ -214,13 +209,6 @@ async function runQuery(
       additionalDirectories: extraDirs.length > 0 ? extraDirs : undefined,
       resume: sessionId,
       resumeSessionAt: resumeAt,
-      systemPrompt: {
-        type: 'preset' as const,
-        preset: 'claude_code' as const,
-        append:
-          `Your NanoClaw version IS: ${containerInput.nanoclawVersion || '?'}. Your Agent Runner version IS: ${RUNNER_VERSION}.` +
-          (globalClaudeMd ? `\n\n${globalClaudeMd}` : ''),
-      },
       allowedTools: [
         'Bash',
         'Read',
