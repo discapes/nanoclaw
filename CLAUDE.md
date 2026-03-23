@@ -123,7 +123,7 @@ Slash commands are sent by users in the chat channel (e.g., Telegram). They can 
 
 ## Telegram MarkdownV2
 
-Messages are sent with `parse_mode: 'MarkdownV2'`. The agent is instructed to produce MarkdownV2-formatted output directly. All special characters outside of code blocks must be escaped with `\`. See https://core.telegram.org/bots/api#markdownv2-style.
+Messages are sent with `parse_mode: 'MarkdownV2'`. The agent writes standard Markdown and the Telegram channel converts it to MarkdownV2 automatically using `telegramify-markdown`. Agents do NOT need to escape special characters or produce MarkdownV2 directly.
 
 ## Troubleshooting
 

@@ -3,6 +3,7 @@ import https from 'https';
 import os from 'os';
 import path from 'path';
 import { Api, Bot, InputFile } from 'grammy';
+import telegramifyMarkdown from 'telegramify-markdown';
 
 import { ASSISTANT_NAME, GROUPS_DIR, TRIGGER_PATTERN } from '../config.ts';
 import { readEnvByPrefix } from '../env.ts';
@@ -22,10 +23,12 @@ export interface TelegramChannelOpts {
   registeredGroups: () => Record<string, RegisteredGroup>;
 }
 
-/**
- * Send a message with Telegram MarkdownV2 parse mode, falling back to plain text.
- * The agent is instructed to produce MarkdownV2-formatted output directly.
- */
+function toMarkdownV2(text: string): string {
+  let result = telegramifyMarkdown(text, 'escape');
+  result = result.replace(/\\\|\\\|(.+?)\\\|\\\|/gs, '||$1||');
+  return result;
+}
+
 async function sendTelegramMessage(
   api: { sendMessage: Api['sendMessage'] },
   chatId: string | number,
@@ -33,7 +36,7 @@ async function sendTelegramMessage(
   options: { message_thread_id?: number } = {},
 ): Promise<void> {
   try {
-    await api.sendMessage(chatId, text, {
+    await api.sendMessage(chatId, toMarkdownV2(text), {
       ...options,
       parse_mode: 'MarkdownV2',
     });
@@ -146,7 +149,9 @@ export class TelegramChannel implements Channel {
           : (ctx.chat as any).title || 'Unknown';
 
       ctx.reply(
-        `Chat ID: \`${this.jidPrefix}${chatId}\`\nName: ${chatName}\nType: ${chatType}`,
+        toMarkdownV2(
+          `Chat ID: \`${this.jidPrefix}${chatId}\`\nName: ${chatName}\nType: ${chatType}`,
+        ),
         { parse_mode: 'MarkdownV2' },
       );
     });
@@ -438,14 +443,15 @@ export class TelegramChannel implements Channel {
     const ext = path.extname(filePath).toLowerCase();
     const imageExts = new Set(['.jpg', '.jpeg', '.png', '.gif', '.webp']);
 
+    const mdCaption = caption ? toMarkdownV2(caption) : undefined;
     if (imageExts.has(ext)) {
       await this.bot.api.sendPhoto(numericId, file, {
-        caption,
+        caption: mdCaption,
         parse_mode: 'MarkdownV2',
       });
     } else {
       await this.bot.api.sendDocument(numericId, file, {
-        caption,
+        caption: mdCaption,
         parse_mode: 'MarkdownV2',
       });
     }
