@@ -209,6 +209,7 @@ async function runQuery(
       additionalDirectories: extraDirs.length > 0 ? extraDirs : undefined,
       resume: sessionId,
       resumeSessionAt: resumeAt,
+      systemPrompt: 'FOOBAR_SYSTEM_PROMPT',
       allowedTools: [
         'Bash',
         'Read',
