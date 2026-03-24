@@ -11,8 +11,6 @@
  *   Each result is wrapped in OUTPUT_START_MARKER / OUTPUT_END_MARKER pairs.
  */
 
-process.env.ANTHROPIC_BASE_URL = 'http://host.docker.internal:8081';
-
 const RUNNER_VERSION = '2.0.0';
 
 import fs from 'fs';
