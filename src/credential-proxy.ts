@@ -155,6 +155,19 @@ export function startCredentialProxy(
   });
 }
 
+function hasEnvSuffix(
+  entries: Record<string, string>,
+  prefix: string,
+  folder: string,
+): boolean {
+  return Object.keys(entries).some(
+    (k) =>
+      k.length > prefix.length &&
+      k[prefix.length] === '_' &&
+      k.slice(prefix.length + 1).toLowerCase() === folder,
+  );
+}
+
 /** Detect auth mode for a specific group, checking for per-group overrides. */
 export function detectGroupAuthMode(groupFolder: string): {
   mode: AuthMode;
@@ -163,9 +176,9 @@ export function detectGroupAuthMode(groupFolder: string): {
   const folder = groupFolder.toLowerCase();
   const keys = readEnvByPrefix('ANTHROPIC_API_KEY');
   const oauthKeys = readEnvByPrefix('CLAUDE_CODE_OAUTH_TOKEN');
-  if (keys[`ANTHROPIC_API_KEY_${folder}`])
+  if (hasEnvSuffix(keys, 'ANTHROPIC_API_KEY', folder))
     return { mode: 'api-key', hasGroupKey: true };
-  if (oauthKeys[`CLAUDE_CODE_OAUTH_TOKEN_${folder}`])
+  if (hasEnvSuffix(oauthKeys, 'CLAUDE_CODE_OAUTH_TOKEN', folder))
     return { mode: 'oauth', hasGroupKey: true };
   return {
     mode: keys['ANTHROPIC_API_KEY'] ? 'api-key' : 'oauth',
