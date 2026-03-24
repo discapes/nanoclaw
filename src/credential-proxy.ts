@@ -9,18 +9,39 @@
  *             API key via /api/oauth/claude_cli/create_api_key.
  *             Proxy injects real OAuth token on that exchange request;
  *             subsequent requests carry the temp key which is valid as-is.
+ *
+ * Per-group credentials:
+ *   ANTHROPIC_API_KEY_<folder> or CLAUDE_CODE_OAUTH_TOKEN_<folder> in .env
+ *   override the default for that group. The container runner encodes the
+ *   group folder in the placeholder (e.g. "placeholder:foobar") so the proxy
+ *   can look up the right credential.
  */
 import { createServer, type Server } from 'http';
 import { request as httpsRequest } from 'https';
 import { request as httpRequest, type RequestOptions } from 'http';
 
-import { readEnvFile } from './env.ts';
+import { readEnvByPrefix, readEnvFile } from './env.ts';
 import { logger } from './logger.ts';
 
 export type AuthMode = 'api-key' | 'oauth';
 
 export interface ProxyConfig {
   authMode: AuthMode;
+}
+
+function buildCredentialMap(
+  prefix: string,
+  defaultValue: string | undefined,
+): Map<string, string> {
+  const map = new Map<string, string>();
+  if (defaultValue) map.set('placeholder', defaultValue);
+  for (const [envKey, value] of Object.entries(readEnvByPrefix(prefix))) {
+    const suffix = envKey.slice(prefix.length);
+    if (suffix.startsWith('_') && suffix.length > 1) {
+      map.set(`placeholder:${suffix.slice(1).toLowerCase()}`, value);
+    }
+  }
+  return map;
 }
 
 export function startCredentialProxy(
@@ -34,9 +55,21 @@ export function startCredentialProxy(
     'ANTHROPIC_BASE_URL',
   ]);
 
-  const authMode: AuthMode = secrets.ANTHROPIC_API_KEY ? 'api-key' : 'oauth';
-  const oauthToken =
+  const defaultOauth =
     secrets.CLAUDE_CODE_OAUTH_TOKEN || secrets.ANTHROPIC_AUTH_TOKEN;
+
+  const apiKeyMap = buildCredentialMap(
+    'ANTHROPIC_API_KEY',
+    secrets.ANTHROPIC_API_KEY,
+  );
+  const oauthMap = buildCredentialMap('CLAUDE_CODE_OAUTH_TOKEN', defaultOauth);
+
+  const perGroupKeys = [...apiKeyMap.keys(), ...oauthMap.keys()].filter(
+    (k) => k !== 'placeholder',
+  );
+  if (perGroupKeys.length) {
+    logger.info({ groups: perGroupKeys }, 'Per-group credentials loaded');
+  }
 
   const upstreamUrl = new URL(
     secrets.ANTHROPIC_BASE_URL || 'https://api.anthropic.com',
@@ -62,20 +95,24 @@ export function startCredentialProxy(
         delete headers['keep-alive'];
         delete headers['transfer-encoding'];
 
-        if (authMode === 'api-key') {
-          // API key mode: inject x-api-key on every request
+        // Resolve per-group or default API key
+        const sentKey = headers['x-api-key'] as string | undefined;
+        if (sentKey?.startsWith('placeholder')) {
+          const realKey = apiKeyMap.get(sentKey) || secrets.ANTHROPIC_API_KEY;
           delete headers['x-api-key'];
-          headers['x-api-key'] = secrets.ANTHROPIC_API_KEY;
-        } else {
-          // OAuth mode: replace placeholder Bearer token with the real one
-          // only when the container actually sends an Authorization header
-          // (exchange request + auth probes). Post-exchange requests use
-          // x-api-key only, so they pass through without token injection.
-          if (headers['authorization']) {
+          if (realKey) headers['x-api-key'] = realKey;
+        }
+
+        // Resolve per-group or default OAuth token
+        if (headers['authorization']) {
+          const bearer = (headers['authorization'] as string).replace(
+            /^Bearer\s+/i,
+            '',
+          );
+          if (bearer.startsWith('placeholder')) {
+            const realToken = oauthMap.get(bearer) || defaultOauth;
             delete headers['authorization'];
-            if (oauthToken) {
-              headers['authorization'] = `Bearer ${oauthToken}`;
-            }
+            if (realToken) headers['authorization'] = `Bearer ${realToken}`;
           }
         }
 
@@ -110,7 +147,7 @@ export function startCredentialProxy(
     });
 
     server.listen(port, host, () => {
-      logger.info({ port, host, authMode }, 'Credential proxy started');
+      logger.info({ port, host }, 'Credential proxy started');
       resolve(server);
     });
 
@@ -118,8 +155,20 @@ export function startCredentialProxy(
   });
 }
 
-/** Detect which auth mode the host is configured for. */
-export function detectAuthMode(): AuthMode {
-  const secrets = readEnvFile(['ANTHROPIC_API_KEY']);
-  return secrets.ANTHROPIC_API_KEY ? 'api-key' : 'oauth';
+/** Detect auth mode for a specific group, checking for per-group overrides. */
+export function detectGroupAuthMode(groupFolder: string): {
+  mode: AuthMode;
+  hasGroupKey: boolean;
+} {
+  const folder = groupFolder.toLowerCase();
+  const keys = readEnvByPrefix('ANTHROPIC_API_KEY');
+  const oauthKeys = readEnvByPrefix('CLAUDE_CODE_OAUTH_TOKEN');
+  if (keys[`ANTHROPIC_API_KEY_${folder}`])
+    return { mode: 'api-key', hasGroupKey: true };
+  if (oauthKeys[`CLAUDE_CODE_OAUTH_TOKEN_${folder}`])
+    return { mode: 'oauth', hasGroupKey: true };
+  return {
+    mode: keys['ANTHROPIC_API_KEY'] ? 'api-key' : 'oauth',
+    hasGroupKey: false,
+  };
 }

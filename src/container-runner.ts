@@ -26,7 +26,7 @@ import {
 } from './config.ts';
 import { resolveGroupFolderPath, resolveGroupIpcPath } from './group-folder.ts';
 import { logger } from './logger.ts';
-import { detectAuthMode } from './credential-proxy.ts';
+import { detectGroupAuthMode } from './credential-proxy.ts';
 import { validateAdditionalMounts } from './mount-security.ts';
 import type { RegisteredGroup } from './types.ts';
 
@@ -251,14 +251,19 @@ function buildContainerArgs(
   }
 
   // Mirror the host's auth method with a placeholder value.
-  // API key mode: SDK sends x-api-key, proxy replaces with real key.
-  // OAuth mode:   SDK exchanges placeholder token for temp API key,
-  //               proxy injects real OAuth token on that exchange request.
-  const authMode = detectAuthMode();
+  // Per-group keys: if ANTHROPIC_API_KEY_<folder> or CLAUDE_CODE_OAUTH_TOKEN_<folder>
+  // exists in .env, the placeholder encodes the folder name so the proxy can
+  // select the right credential. Otherwise falls back to the global default.
+  const { mode: authMode, hasGroupKey } = detectGroupAuthMode(
+    input.groupFolder,
+  );
+  const placeholder = hasGroupKey
+    ? `placeholder:${input.groupFolder.toLowerCase()}`
+    : 'placeholder';
   if (authMode === 'api-key') {
-    args.push('-e', 'ANTHROPIC_API_KEY=placeholder');
+    args.push('-e', `ANTHROPIC_API_KEY=${placeholder}`);
   } else {
-    args.push('-e', 'CLAUDE_CODE_OAUTH_TOKEN=placeholder');
+    args.push('-e', `CLAUDE_CODE_OAUTH_TOKEN=${placeholder}`);
   }
 
   // Runtime-specific args for host gateway resolution
