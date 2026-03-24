@@ -35,6 +35,7 @@ import {
   extractText,
   formatMessage,
 } from './format.ts';
+import { buildSystemPrompt } from './system-prompt.ts';
 
 interface ContainerInput {
   prompt: string;
@@ -202,6 +203,8 @@ async function runQuery(
     pendingTimer = setTimeout(() => flushPending(), 500);
   };
 
+  const systemPrompt = await buildSystemPrompt('/workspace/group');
+
   for await (const message of query({
     prompt: stream,
     options: {
@@ -209,7 +212,7 @@ async function runQuery(
       additionalDirectories: extraDirs.length > 0 ? extraDirs : undefined,
       resume: sessionId,
       resumeSessionAt: resumeAt,
-      systemPrompt: 'FOOBAR_SYSTEM_PROMPT',
+      systemPrompt,
       allowedTools: [
         'Bash',
         'Read',

@@ -88,7 +88,7 @@ function createContainerServer(
 
   server.tool(
     'send_file',
-    'Send a file (image, document, etc.) to the user or group. The file must be under /workspace/group/ (recommended: /workspace/group/outbox/).',
+    'Send a file (image, document, etc.) to the user or group. The file must be under /workspace/group/.',
     {
       filePath: z
         .string()
@@ -102,9 +102,7 @@ function createContainerServer(
     },
     async ({ filePath, caption }) => {
       if (!filePath.startsWith('/workspace/group/')) {
-        return err(
-          'File must be under /workspace/group/. Move it to /workspace/group/outbox/ first.',
-        );
+        return err('File must be under /workspace/group/.');
       }
       const hostPath = filePath.replace(
         /^\/workspace\/group\//,
