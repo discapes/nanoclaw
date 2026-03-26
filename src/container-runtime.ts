@@ -62,6 +62,22 @@ export function stopContainer(name: string): string {
   return `${CONTAINER_RUNTIME_BIN} stop ${name}`;
 }
 
+/** Ensure the 'shared' Docker network exists (for DNS resolution between containers). */
+export function ensureSharedNetwork(): void {
+  try {
+    execSync(`${CONTAINER_RUNTIME_BIN} network inspect shared`, {
+      stdio: 'pipe',
+      timeout: 5000,
+    });
+  } catch {
+    logger.info('Creating shared Docker network');
+    execSync(`${CONTAINER_RUNTIME_BIN} network create shared`, {
+      stdio: 'pipe',
+      timeout: 10000,
+    });
+  }
+}
+
 /** Ensure the container runtime is running, starting it if needed. */
 export function ensureContainerRuntimeRunning(): void {
   try {
@@ -70,6 +86,7 @@ export function ensureContainerRuntimeRunning(): void {
       timeout: 10000,
     });
     logger.debug('Container runtime already running');
+    ensureSharedNetwork();
   } catch (err) {
     logger.error({ err }, 'Failed to reach container runtime');
     console.error(
